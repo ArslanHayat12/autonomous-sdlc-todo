@@ -56,6 +56,7 @@ Environment overrides:
 | `SDLC_INSTALL_AIHERO_SKILLS` | `1` runs `npx skills@latest add mattpocock/skills` when `skills/` is empty |
 | `SDLC_KEEP_WORKTREE` | `1` keeps `.sdlc-worktrees/…` after run |
 | `SDLC_SKIP_AUTO_PULL` | `1` skips all automatic `git fetch` + fast-forward merges on your base-branch checkout (see `autoPullMain*` in `sdlc.features.json`) |
+| `SDLC_SKIP_CLEAR_MAIN_AFTER_MERGE` | `1` skips stashing/reset on `main` after merge (see `clearMainCheckoutAfterMerge`) |
 
 ## What `npm run sdlc` does
 
@@ -69,7 +70,7 @@ Environment overrides:
 8. **Commits** with a Conventional-Commit **title + body** (OpenAI + selected skills when **`autoCommitMessageFromSkills`** and `OPENAI_API_KEY` are set; else template).  
 9. **Pushes** + **ensures PR labels exist** (`gh label create … --force` for each configured label, unless `SDLC_SKIP_LABEL_ENSURE=1`) + **`gh pr create`** + optional **pull on base branch** (`autoPullMainAfterPr`).  
 10. **AI review** loop (up to `maxAiReviewIterations`) with optional auto-fix commits + push.  
-11. **`gh pr merge --squash`** when policies pass — **never** `--admin`; branch protection / required reviews still apply; then optional **pull** so local `main` matches remote (`autoPullMainAfterMerge`).  
+11. **`gh pr merge --squash`** when policies pass — **never** `--admin`; branch protection / required reviews still apply; then optional **pull** so local `main` matches remote (`autoPullMainAfterMerge`), then optional **stash or reset** on local `main` so Cursor shows no pending changes (`clearMainCheckoutAfterMerge`).  
 12. Optional **local Docker deploy** if merge succeeded and **`autoDeployLocal`** is true in `sdlc.features.json` **or** `SDLC_DEPLOY_LOCAL=1`.  
 13. Writes a Markdown report under `artifacts/sdlc-reports/` and `.sdlc/workflow-state.json`.
 
@@ -118,6 +119,7 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 | `autoPullMainAfterPr` | `true` | After a PR is created: same **fast-forward pull** on your `main` checkout (if clean and on base branch). |
 | `autoPullMainAfterMerge` | `true` | After **`gh pr merge` succeeds**: fast-forward **local** `main` so it includes the merge. |
 | `autoCommitMessageFromSkills` | `true` | If `OPENAI_API_KEY` is set and **Hero skills** were selected, use the model to draft the conventional commit (aligned with `SKILL.md` context); otherwise use the template. |
+| `clearMainCheckoutAfterMerge` | `"stash"` | After a **successful** merge + pull on `git.baseBranch`, clear **local** uncommitted files on that branch (so Cursor “Changes” is empty). `"stash"` = recoverable; `"hard"` = `reset --hard` + `clean -fd`; `"none"` = off. Skips in in-place (`isolatedWorktree: false`) mode. |
 
 ## Honest limits
 

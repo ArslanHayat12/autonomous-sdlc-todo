@@ -14,5 +14,6 @@
   "autoPullMainBeforeRun": true,
   "autoPullMainAfterPr": true,
   "autoPullMainAfterMerge": true,
-  "autoCommitMessageFromSkills": true
+  "autoCommitMessageFromSkills": true,
+  "clearMainCheckoutAfterMerge": "stash"
 }
