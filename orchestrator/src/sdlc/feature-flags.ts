@@ -39,6 +39,16 @@ export type SdlcFeatureFlags = {
   autoPullMainAfterMerge: boolean;
   /** When OPENAI_API_KEY is set and Hero skills were selected, use the model to draft the conventional commit (skill-aware); else template. */
   autoCommitMessageFromSkills: boolean;
+  /**
+   * When `true`, do **not** run `gh pr merge` after the agent opens a PR — merge on GitHub manually (reviews, branch protection).
+   * When `false`, attempt automatic merge after the agent finishes (same as `autoMerge` and GitHub policy still applies).
+   */
+  requireHumanApprovalBeforeMerge: boolean;
+  /**
+   * One-switch **no-human-on-merge** path: forces `autoCommit`, `autoPush`, `autoPr`, `autoMerge` and sets `requireHumanApprovalBeforeMerge` to `false`.
+   * Does **not** change `qualityGates` or `aiReview` — set those separately when you want tests before merge.
+   */
+  fullAgentAutomation: boolean;
 };
 
 const defaultFlags: SdlcFeatureFlags = {
@@ -58,6 +68,8 @@ const defaultFlags: SdlcFeatureFlags = {
   autoPullMainAfterPr: true,
   autoPullMainAfterMerge: true,
   autoCommitMessageFromSkills: true,
+  requireHumanApprovalBeforeMerge: false,
+  fullAgentAutomation: false,
 };
 
 function deepClone<T>(x: T): T {
@@ -85,22 +97,33 @@ export type SdlcConfigWithFeatures = SdlcConfig & { features: SdlcFeatureFlags }
 
 export function applyFeatureFlagsToConfig(base: SdlcConfig, f: SdlcFeatureFlags): SdlcConfigWithFeatures {
   const c = deepClone(base) as SdlcConfigWithFeatures;
-  c.features = { ...f };
-  c.git.worktreesEnabled = f.isolatedWorktree;
-  c.git.pruneStaleWorktreesOnStart = f.pruneStaleWorktreesOnStart;
-  c.git.autoStage = f.autoCommit;
-  c.git.autoCommit = f.autoCommit;
-  c.git.autoPush = f.autoPush;
-  c.git.autoCreatePr = f.autoPr;
-  c.git.autoMerge = f.autoMerge;
+  let flags = { ...f };
+  if (flags.fullAgentAutomation) {
+    flags = {
+      ...flags,
+      autoCommit: true,
+      autoPush: true,
+      autoPr: true,
+      autoMerge: true,
+      requireHumanApprovalBeforeMerge: false,
+    };
+  }
+  c.features = flags;
+  c.git.worktreesEnabled = flags.isolatedWorktree;
+  c.git.pruneStaleWorktreesOnStart = flags.pruneStaleWorktreesOnStart;
+  c.git.autoStage = flags.autoCommit;
+  c.git.autoCommit = flags.autoCommit;
+  c.git.autoPush = flags.autoPush;
+  c.git.autoCreatePr = flags.autoPr;
+  c.git.autoMerge = flags.autoMerge;
 
-  if (!f.aiHeroSkills) {
+  if (!flags.aiHeroSkills) {
     c.aiHero.discoveryEnabled = false;
     c.aiHero.selectionEnabled = false;
     c.aiHero.executionEnabled = false;
     c.aiHero.validationEnabled = false;
   }
-  if (!f.qualityGates) {
+  if (!flags.qualityGates) {
     for (const k of Object.keys(c.qualityGates) as (keyof typeof c.qualityGates)[]) {
       c.qualityGates[k] = { ...c.qualityGates[k], enabled: false, mandatory: false };
     }

@@ -102,6 +102,7 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 
 | Key | Default | Effect |
 |-----|---------|--------|
+| `fullAgentAutomation` | `false` | **`true`**: forces **`autoCommit`**, **`autoPush`**, **`autoPr`**, **`autoMerge`** and **`requireHumanApprovalBeforeMerge: false`** so the CLI always tries commit → push → PR → merge with no “human merge only” gate. Does **not** turn on **`qualityGates`** or **`aiReview`** — set those when you want local tests before merge. **GitHub** may still require CI/reviews (configure branch rules or use `gh` token with rights; this tool never uses `--admin`). |
 | `isolatedWorktree` | `true` | `true`: linked worktree under `.sdlc-worktrees/`. `false`: new branch in the main clone (requires clean tree). |
 | `pruneStaleWorktreesOnStart` | `true` | Remove old `sdlc__agent-*` worktrees before each run (when worktrees are enabled). |
 | `autoImplement` | `true` | OpenAI (or fallback) code edits. `false`: plan + gates only, no patch application. |
@@ -112,6 +113,7 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 | `autoPush` | `true` | Push the feature branch (`false` also disables PR creation; `gh pr create` needs a pushed branch). |
 | `autoPr` | `true` | `gh pr create` when commit + push ran. |
 | `autoMerge` | `true` | `gh pr merge` when policy allows (GitHub branch protection still applies). |
+| `requireHumanApprovalBeforeMerge` | `false` | `false`: agent runs `gh pr merge` after the PR (fully automated on the CLI side). `true`: **skip** merge — a human merges on GitHub (reviews / branch rules). |
 | `autoDeployLocal` | `false` | After successful merge: run local `docker compose` deploy (requires `docker.enabled` in `sdlc.config.ts`). Env `SDLC_DEPLOY_LOCAL=1` still works. |
 | `syncUncommittedFromMain` | `true` | After `syncPathsFromMain`, copy **uncommitted** files from your main checkout into the worktree so `autoCommit` can include local edits (without committing on `main` first). Set `false` to only use committed state + listed sync paths + AI. |
 | `autoPullMainBeforeRun` | `true` | Before the worktree: if you're on a **clean** `git.baseBranch`, `git fetch` + `merge --ff-only origin/<branch>`. |

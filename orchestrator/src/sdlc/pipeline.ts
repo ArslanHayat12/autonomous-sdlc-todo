@@ -555,6 +555,7 @@ async function runFullPipeline(
 
     const canMerge =
       cfg.git.autoMerge &&
+      !cfg.features.requireHumanApprovalBeforeMerge &&
       mergeCheck.ok &&
       cfg.git.autoPush &&
       prNumber !== null &&
@@ -569,10 +570,15 @@ async function runFullPipeline(
       if (mr.ok) {
         tryFastForwardMainCheckout(cfg, 'afterMerge', 'after merge on remote — update local main');
       }
+    } else if (cfg.features.requireHumanApprovalBeforeMerge && mergeCheck.ok && prNumber !== null && owner && repo) {
+      mergeStatus =
+        'Merge skipped: requireHumanApprovalBeforeMerge is true — finish on GitHub (reviews / merge button). Agent work is done.';
     } else if (!mergeCheck.ok) {
       mergeStatus = mergeCheck.reason;
     } else if (!cfg.git.autoMerge) {
       mergeStatus = 'Merge skipped: autoMerge is false (sdlc.features.json or sdlc.config.ts).';
+    } else if (cfg.features.requireHumanApprovalBeforeMerge) {
+      mergeStatus = 'Merge skipped: requireHumanApprovalBeforeMerge is true (human merges on GitHub).';
     } else if (!cfg.git.autoPush) {
       mergeStatus = 'Merge skipped: autoPush is false — merge requires a pushed branch.';
     } else if (prNumber === null) {
