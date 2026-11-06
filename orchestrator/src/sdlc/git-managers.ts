@@ -13,7 +13,7 @@ export class GitWorktreeManager {
   constructor(private readonly cfg: SdlcConfig) {}
 
   resolveBaseSha(mainRepoRoot: string): string {
-    return resolveMainBaseSha(mainRepoRoot);
+    return resolveMainBaseSha(mainRepoRoot, this.cfg.git.baseBranch);
   }
 
   async create(mainRepoRoot: string, baseSha: string): Promise<WorktreeSession> {

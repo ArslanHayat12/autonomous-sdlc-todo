@@ -1,4 +1,8 @@
 {
+  "fullAgentAutomation": true,
+  "requireHumanApprovalBeforeMerge": false,
+  "runMainRepoVerificationBeforeSdlc": true,
+  "mainRepoVerificationCommand": "npm run build",
   "isolatedWorktree": true,
   "pruneStaleWorktreesOnStart": true,
   "autoImplement": true,
@@ -14,6 +18,5 @@
   "autoPullMainBeforeRun": true,
   "autoPullMainAfterPr": true,
   "autoPullMainAfterMerge": true,
-  "autoCommitMessageFromSkills": true,
-  "clearMainCheckoutAfterMerge": "stash"
+  "autoCommitMessageFromSkills": true
 }

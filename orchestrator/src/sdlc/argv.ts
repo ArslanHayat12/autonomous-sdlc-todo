@@ -21,6 +21,14 @@ export function parseArgv(argv: string[]): ParsedArgv {
       else if (f === '--deploy-only') mode = 'deployOnly';
     }
   }
-  const instruction = tokens.join(' ').trim() || 'Analyze the Todo app and propose one small, safe improvement.';
+  const fromCli = tokens.join(' ').trim();
+  const defaultFromEnv =
+    mode === 'dryRun' || mode === 'status' || mode === 'resume'
+      ? ''
+      : (process.env.SDLC_INSTRUCTION ?? '').trim();
+  const instruction =
+    fromCli ||
+    defaultFromEnv ||
+    'Analyze the Todo app and propose one small, safe improvement.';
   return { mode, instruction };
 }

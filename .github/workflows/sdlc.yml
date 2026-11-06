@@ -1,0 +1,54 @@
+# Autonomous SDLC without a human typing `npm run sdlc` — trigger on schedule, workflow_dispatch, or push.
+# Set repo secrets: OPENAI_API_KEY, SDLC_INSTRUCTION (optional; defaults in repo), GH_TOKEN (repo workflow token for gh).
+
+name: SDLC autonomous run
+
+on:
+  workflow_dispatch:
+    inputs:
+      instruction:
+        description: 'SDLC instruction (overrides secret SDLC_INSTRUCTION)'
+        required: false
+        default: ''
+  schedule:
+    # Weekly; remove or change cron if you do not want periodic runs
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: sdlc-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sdlc:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run SDLC
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'gpt-4.1-mini' }}
+          SDLC_INSTRUCTION: ${{ github.event.inputs.instruction || secrets.SDLC_INSTRUCTION || 'Autonomous SDLC run from GitHub Actions' }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+        run: |
+          echo "${{ secrets.GH_TOKEN || github.token }}" | gh auth login --with-token
+          gh auth setup-git
+          npm run sdlc:auto

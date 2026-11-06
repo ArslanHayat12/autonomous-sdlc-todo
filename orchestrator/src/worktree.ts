@@ -18,16 +18,22 @@ function trim(s: string): string {
 }
 
 /**
- * Resolve the commit SHA to branch `main` from: origin/main, main, or remote HEAD.
+ * Resolve the commit SHA for the SDLC **base** branch (e.g. `main`).
+ *
+ * **Prefer `origin/<baseBranch>`** after `fetch` so feature branches match GitHub’s default
+ * branch — using only local `refs/heads/main` can leave you behind `origin/main` and produce PRs
+ * GitHub reports as “not mergeable” until manually updated.
  */
-export function resolveMainBaseSha(mainRepoRoot: string): string {
+export function resolveMainBaseSha(mainRepoRoot: string, baseBranch = 'main'): string {
   execGit(mainRepoRoot, ['fetch', 'origin'], true);
-  /** Prefer local main/master so committed fixes apply before a push; then remote defaults. */
+  /** Remote tracking first, then local branch, then legacy main/master fallbacks. */
   const candidates = [
-    'refs/heads/main',
-    'refs/heads/master',
+    `refs/remotes/origin/${baseBranch}`,
+    `refs/heads/${baseBranch}`,
     'refs/remotes/origin/main',
     'refs/remotes/origin/master',
+    'refs/heads/main',
+    'refs/heads/master',
     'main',
     'master',
   ];
