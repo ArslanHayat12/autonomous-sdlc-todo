@@ -27,7 +27,8 @@ export class MergeManager {
   constructor(private readonly cfg: SdlcConfig) {}
 
   canAutoMerge(gates: GateResult[], hasCriticalReview: boolean): { ok: boolean; reason: string } {
-    const mandatoryBad = gates.filter(g => g.mandatory && g.status !== 'passed');
+    /** `skipped` is allowed for merge policy — only **failed** mandatory gates block */
+    const mandatoryBad = gates.filter(g => g.mandatory && g.status !== 'passed' && g.status !== 'skipped');
     if (mandatoryBad.length) {
       return {
         ok: false,
