@@ -1,0 +1,1 @@
+{ "name": "@todo/orchestrator", "version": "1.0.0", "type": "module", "scripts": { "build": "tsc -p tsconfig.json", "sdlc": "tsx src/cli.ts" }, "dependencies": { "openai": "^5.20.0" }, "devDependencies": { "tsx": "^4.20.6", "@types/node": "^24.7.2" } }

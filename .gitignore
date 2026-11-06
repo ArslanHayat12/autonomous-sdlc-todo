@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+dist
+.playwright
+playwright-report
+test-results
+.DS_Store
+.env
+.env.*
+!.env.example
+coverage/
+.playwright/
+test-results/
