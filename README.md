@@ -32,6 +32,18 @@ cp .env.example .env
 npm run sdlc -- "Add authentication to Todo"
 ```
 
+### Hands-off run (no instruction on the command line)
+
+For **automation** (cron, CI, desktop shortcut), put the task in **`SDLC_INSTRUCTION`** in `.env` and run:
+
+```bash
+npm run sdlc:auto
+```
+
+That runs `npm run sdlc` with **no argv**; the orchestrator uses **`process.env.SDLC_INSTRUCTION`** as the default instruction (CLI args still win if you pass them).
+
+On **GitHub Actions**, use workflow [`.github/workflows/sdlc.yml`](.github/workflows/sdlc.yml): set repo secrets **`OPENAI_API_KEY`**, optionally **`SDLC_INSTRUCTION`**, and **`GH_TOKEN`** (or rely on the default `GITHUB_TOKEN`). Trigger **workflow_dispatch** or edit the `schedule` cron — no one types `npm run sdlc` on their laptop.
+
 ### CLI flags
 
 | Flag | Behavior |
@@ -48,6 +60,9 @@ Environment overrides:
 | Variable | Purpose |
 |----------|---------|
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | AI provider |
+| `SDLC_INSTRUCTION` | Default task when `npm run sdlc` / `sdlc:auto` have **no** quoted instruction (CLI args override) |
+| `SDLC_VERIFY_COMMAND` | Override pre-SDLC verification command on `main` (default from `mainRepoVerificationCommand` in `sdlc.features.json`) |
+| `SDLC_SKIP_MAIN_VERIFY` | `1` skips `runMainRepoVerificationBeforeSdlc` even when enabled in JSON |
 | `GITHUB_OWNER` / `GITHUB_REPO` | Override for `gh` when origin URL is unusual |
 | `GITHUB_BASE_BRANCH` | PR base (else `gh repo view … defaultBranchRef`) |
 | `SDLC_SKIP_LABEL_ENSURE` | `1` skips `gh label create` before PR (default: create missing labels from `sdlc.config.ts` so `gh pr create --label` succeeds) |
@@ -56,23 +71,25 @@ Environment overrides:
 | `SDLC_INSTALL_AIHERO_SKILLS` | `1` runs `npx skills@latest add mattpocock/skills` when `skills/` is empty |
 | `SDLC_KEEP_WORKTREE` | `1` keeps `.sdlc-worktrees/…` after run |
 | `SDLC_SKIP_AUTO_PULL` | `1` skips all automatic `git fetch` + fast-forward merges on your base-branch checkout (see `autoPullMain*` in `sdlc.features.json`) |
-| `SDLC_SKIP_CLEAR_MAIN_AFTER_MERGE` | `1` skips stashing/reset on `main` after merge (see `clearMainCheckoutAfterMerge`) |
+| `SDLC_SKIP_SYNC_BEFORE_MERGE` | `1` skips **rebase onto `origin/<base>`** + **`git push --force-with-lease`** before `gh pr merge` (default: sync so GitHub can merge when `main` moved during the run) |
 
 ## What `npm run sdlc` does
 
 1. Reads **`orchestrator/sdlc.config.ts`** (compiled to `dist/sdlc.config.js` at build time) and merges optional **`sdlc.features.json`** at the repo root.  
 2. Optionally **fast-forwards** a **clean** base-branch checkout (`autoPullMainBeforeRun`).  
-3. By default creates a **linked Git worktree** under `.sdlc-worktrees/` (**main checkout not modified**). Set `isolatedWorktree: false` in `sdlc.features.json` to use a new branch in the main clone instead (requires a **clean** working tree).  
-4. Syncs paths from `syncPathsFromMain`, then (by default) **uncommitted files from your main checkout** into the worktree — isolated runs no longer ignore files you have not committed on `main`.  
-5. **Plans** (OpenAI) using selected `skills/*/SKILL.md` content.  
-6. **Implements** via OpenAI JSON patches (or a tiny fallback when no key).  
-7. Runs **quality gates** from config (build, audit, e2e, optional DAST curl, optional `docker compose build`). **Skipped** gates are logged as **skipped**, not **passed**.  
-8. **Commits** with a Conventional-Commit **title + body** (OpenAI + selected skills when **`autoCommitMessageFromSkills`** and `OPENAI_API_KEY` are set; else template).  
-9. **Pushes** + **ensures PR labels exist** (`gh label create … --force` for each configured label, unless `SDLC_SKIP_LABEL_ENSURE=1`) + **`gh pr create`** + optional **pull on base branch** (`autoPullMainAfterPr`).  
-10. **AI review** loop (up to `maxAiReviewIterations`) with optional auto-fix commits + push.  
-11. **`gh pr merge --squash`** when policies pass — **never** `--admin`; branch protection / required reviews still apply; then optional **pull** so local `main` matches remote (`autoPullMainAfterMerge`), then optional **stash or reset** on local `main` so Cursor shows no pending changes (`clearMainCheckoutAfterMerge`).  
-12. Optional **local Docker deploy** if merge succeeded and **`autoDeployLocal`** is true in `sdlc.features.json` **or** `SDLC_DEPLOY_LOCAL=1`.  
-13. Writes a Markdown report under `artifacts/sdlc-reports/` and `.sdlc/workflow-state.json`.
+3. Optionally **verifies** the **main** checkout before the worktree (`runMainRepoVerificationBeforeSdlc`, default command `npm run build`) — fails fast if your last local/test state is broken.  
+4. By default creates a **linked Git worktree** under `.sdlc-worktrees/` (**main checkout not modified**). Set `isolatedWorktree: false` in `sdlc.features.json` to use a new branch in the main clone instead (requires a **clean** working tree).  
+5. Syncs paths from `syncPathsFromMain`, then (by default) **uncommitted files from your main checkout** into the worktree — isolated runs no longer ignore files you have not committed on `main`.  
+6. **Plans** (OpenAI) using selected `skills/*/SKILL.md` content.  
+7. **Implements** via OpenAI JSON patches (or a tiny fallback when no key).  
+8. Runs **quality gates** from config (build, audit, e2e, optional DAST curl, optional `docker compose build`). **Skipped** gates are logged as **skipped**, not **passed**.  
+9. **Commits** with a Conventional-Commit **title + body** (OpenAI + selected skills when **`autoCommitMessageFromSkills`** and `OPENAI_API_KEY` are set; else template).  
+10. **Pushes** + **ensures PR labels exist** (`gh label create … --force` for each configured label, unless `SDLC_SKIP_LABEL_ENSURE=1`) + **`gh pr create`** + optional **pull on base branch** (`autoPullMainAfterPr`).  
+11. **AI review** loop (up to `maxAiReviewIterations`) with optional auto-fix commits + push.  
+12. **Sync branch for merge**: **`git fetch`**, **`git rebase origin/<baseBranch>`** on the feature branch, **`git push --force-with-lease`** (unless **`SDLC_SKIP_SYNC_BEFORE_MERGE=1`**) so GitHub does not report “not mergeable” when the default branch advanced mid-run.  
+13. **`gh pr merge --squash`** when policies pass — **never** `--admin`; branch protection / required reviews still apply; then optional **pull** so local `main` matches remote (`autoPullMainAfterMerge`).  
+14. Optional **local Docker deploy** if merge succeeded and **`autoDeployLocal`** is true in `sdlc.features.json` **or** `SDLC_DEPLOY_LOCAL=1`.  
+15. Writes a Markdown report under `artifacts/sdlc-reports/` and `.sdlc/workflow-state.json`.
 
 ## Run the app locally
 
@@ -103,6 +120,10 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 
 | Key | Default | Effect |
 |-----|---------|--------|
+| `fullAgentAutomation` | `false` | **`true`**: sets `autoCommit`, `autoPush`, `autoPr`, `autoMerge` and **`requireHumanApprovalBeforeMerge: false`** so the CLI keeps trying through merge without a separate “human merge only” toggle. |
+| `requireHumanApprovalBeforeMerge` | `false` | `true`: **skip** `gh pr merge` (human merges on GitHub). `false`: run merge when `autoMerge` and policy allow. |
+| `runMainRepoVerificationBeforeSdlc` | `false` | `true`: run **`mainRepoVerificationCommand`** on the **main checkout** after pull, **before** the worktree (built-in “tested baseline” gate). |
+| `mainRepoVerificationCommand` | `npm run build` | Shell command for that verification; override with env **`SDLC_VERIFY_COMMAND`**. |
 | `isolatedWorktree` | `true` | `true`: linked worktree under `.sdlc-worktrees/`. `false`: new branch in the main clone (requires clean tree). |
 | `pruneStaleWorktreesOnStart` | `true` | Remove old `sdlc__agent-*` worktrees before each run (when worktrees are enabled). |
 | `autoImplement` | `true` | OpenAI (or fallback) code edits. `false`: plan + gates only, no patch application. |
@@ -119,7 +140,6 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 | `autoPullMainAfterPr` | `true` | After a PR is created: same **fast-forward pull** on your `main` checkout (if clean and on base branch). |
 | `autoPullMainAfterMerge` | `true` | After **`gh pr merge` succeeds**: fast-forward **local** `main` so it includes the merge. |
 | `autoCommitMessageFromSkills` | `true` | If `OPENAI_API_KEY` is set and **Hero skills** were selected, use the model to draft the conventional commit (aligned with `SKILL.md` context); otherwise use the template. |
-| `clearMainCheckoutAfterMerge` | `"stash"` | After a **successful** merge + pull on `git.baseBranch`, clear **local** uncommitted files on that branch (so Cursor “Changes” is empty). `"stash"` = recoverable; `"hard"` = `reset --hard` + `clean -fd`; `"none"` = off. Skips in in-place (`isolatedWorktree: false`) mode. |
 
 ## Honest limits
 

@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -38,6 +38,11 @@ import type { SdlcConfigWithFeatures } from './feature-flags.js';
 const mainRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 const logLines: string[] = [];
+
+function trimGitOut(s: string): string {
+  return s.trim();
+}
+
 function step(name: string, detail: string) {
   const line = `[${new Date().toISOString()}] ${name}: ${detail}`;
   logLines.push(line);
@@ -67,6 +72,41 @@ async function gitCommitAll(session: WorktreeSession, title: string, body: strin
 
 function gitPush(session: WorktreeSession): void {
   execGit(session.path, ['push', '-u', 'origin', session.branch]);
+}
+
+/**
+ * Before `gh pr merge`, align the feature branch with **`origin/<base>`** so GitHub can merge
+ * cleanly (fixes “merge commit cannot be cleanly created” when `main` advanced after worktree creation).
+ * Set **`SDLC_SKIP_SYNC_BEFORE_MERGE=1`** to skip.
+ */
+function syncFeatureBranchWithRemoteBase(session: WorktreeSession, baseBranch: string): void {
+  if (process.env.SDLC_SKIP_SYNC_BEFORE_MERGE === '1') {
+    step('git sync (pre-merge)', 'Skipped (SDLC_SKIP_SYNC_BEFORE_MERGE=1).');
+    return;
+  }
+  const fetchOut = execGit(session.path, ['fetch', 'origin'], true);
+  if (fetchOut.startsWith('__GIT_FAIL__')) {
+    step('git sync (pre-merge)', `fetch failed: ${fetchOut.slice(0, 400)}`);
+    return;
+  }
+  const remoteBase = `origin/${baseBranch}`;
+  const haveRemote = trimGitOut(execGit(session.path, ['rev-parse', '--verify', remoteBase], true));
+  if (haveRemote.startsWith('__GIT_FAIL__')) {
+    step('git sync (pre-merge)', `Skipped: no ${remoteBase} (${haveRemote.slice(0, 200)}).`);
+    return;
+  }
+  const rb = execGit(session.path, ['rebase', remoteBase], true);
+  if (rb.startsWith('__GIT_FAIL__')) {
+    execGit(session.path, ['rebase', '--abort'], true);
+    throw new Error(
+      `Could not rebase ${session.branch} onto ${remoteBase} before merge (resolve conflicts manually and push, or open the PR on GitHub):\n${rb.slice(-2000)}`,
+    );
+  }
+  const pw = execGit(session.path, ['push', '--force-with-lease', '-u', 'origin', session.branch], true);
+  if (pw.startsWith('__GIT_FAIL__')) {
+    throw new Error(`Push after rebase failed (--force-with-lease): ${pw.slice(-2000)}`);
+  }
+  step('git sync (pre-merge)', `Rebased onto ${remoteBase} and pushed (--force-with-lease).`);
 }
 
 function blockingReviewFindings(r: ReviewResult): boolean {
@@ -122,48 +162,35 @@ function tryFastForwardMainCheckout(cfg: SdlcConfigWithFeatures, when: PullMainW
 }
 
 /**
- * After merge: clear uncommitted changes on the **base branch** checkout so IDE Source Control matches remote (see `syncUncommittedFromMain`).
- * Only runs when `isolatedWorktree` is true (main clone was only used as copy source). Skips if not on base branch or `SDLC_SKIP_CLEAR_MAIN_AFTER_MERGE=1`.
+ * Optional **human-free** gate: verify the main checkout (e.g. `npm run build`) before branching to SDLC worktree.
+ * Skip with `SDLC_SKIP_MAIN_VERIFY=1` or `runMainRepoVerificationBeforeSdlc: false`.
  */
-function tryClearMainCheckoutAfterMerge(cfg: SdlcConfigWithFeatures): void {
-  const mode = cfg.features.clearMainCheckoutAfterMerge;
-  if (mode === 'none' || process.env.SDLC_SKIP_CLEAR_MAIN_AFTER_MERGE === '1') return;
-  if (!cfg.git.worktreesEnabled) {
-    step('main checkout cleanup', 'Skipped (in-place branch mode — not clearing main).');
+function runMainRepoVerificationIfEnabled(cfg: SdlcConfigWithFeatures): void {
+  if (process.env.SDLC_SKIP_MAIN_VERIFY === '1' || !cfg.features.runMainRepoVerificationBeforeSdlc) {
     return;
   }
-  const base = cfg.git.baseBranch;
-  const cur = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim();
-  if (cur.startsWith('__GIT_FAIL__') || cur !== base) {
-    step('main checkout cleanup', `Skipped (not on ${base}).`);
+  const cmd = (process.env.SDLC_VERIFY_COMMAND ?? cfg.features.mainRepoVerificationCommand).trim();
+  if (!cmd) {
+    step('verify (main checkout)', 'Skipped (empty command).');
     return;
   }
-  const dirty = execGit(mainRepoRoot, ['status', '--porcelain'], true).trim();
-  if (!dirty || dirty.startsWith('__GIT_FAIL__')) {
-    step('main checkout cleanup', `Already clean on ${base}.`);
-    return;
-  }
-  if (mode === 'stash') {
-    const out = execGit(mainRepoRoot, ['stash', 'push', '-u', '-m', 'sdlc: post-merge clear main checkout'], true);
-    if (out.startsWith('__GIT_FAIL__')) {
-      step('main checkout cleanup', `stash failed: ${out.slice(0, 400)}`);
-    } else {
-      step('main checkout cleanup', `Stashed uncommitted changes on ${base} (git stash list to recover).`);
-    }
-    return;
-  }
-  if (mode === 'hard') {
-    const r1 = execGit(mainRepoRoot, ['reset', '--hard', 'HEAD'], true);
-    if (r1.startsWith('__GIT_FAIL__')) {
-      step('main checkout cleanup', `reset --hard failed: ${r1.slice(0, 400)}`);
-      return;
-    }
-    const r2 = execGit(mainRepoRoot, ['clean', '-fd'], true);
-    step(
-      'main checkout cleanup',
-      r2.startsWith('__GIT_FAIL__')
-        ? `reset OK; clean failed: ${r2.slice(0, 300)}`
-        : `Discarded uncommitted changes on ${base} (reset --hard + clean -fd).`,
+  step('verify (main checkout)', `Running: ${cmd}`);
+  const shell = process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : '/bin/sh';
+  try {
+    execSync(cmd, {
+      cwd: mainRepoRoot,
+      stdio: 'pipe',
+      encoding: 'utf8',
+      env: process.env,
+      shell,
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    step('verify (main checkout)', 'Passed.');
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    const tail = [err.stdout, err.stderr].filter(Boolean).join('\n').slice(-4000);
+    throw new Error(
+      `Main checkout verification failed (runMainRepoVerificationBeforeSdlc). Command: ${cmd}\n${tail || err.message || String(e)}`,
     );
   }
 }
@@ -260,6 +287,8 @@ async function runFullPipeline(
   step('worktree prune', 'Stale sdlc worktrees removed when enabled in sdlc.config.ts (frees disk).');
 
   tryFastForwardMainCheckout(cfg, 'beforeRun', 'before worktree');
+
+  runMainRepoVerificationIfEnabled(cfg);
 
   const baseSha = gitWt.resolveBaseSha(mainRepoRoot);
   step('git base', `Using base ${baseSha} (config baseBranch=${branchMgr.baseBranch})`);
@@ -602,6 +631,7 @@ async function runFullPipeline(
 
     const canMerge =
       cfg.git.autoMerge &&
+      !cfg.features.requireHumanApprovalBeforeMerge &&
       mergeCheck.ok &&
       cfg.git.autoPush &&
       prNumber !== null &&
@@ -609,18 +639,33 @@ async function runFullPipeline(
       repo;
 
     if (canMerge) {
-      const mr = await mergeMgr.mergePr(session, owner, repo, prNumber!);
-      mergeStatus = mr.ok ? 'merged (requested via gh; may be queued pending CI / branch protection)' : mr.message;
-      state.mergeAttempted = true;
-      state.mergeSucceeded = mr.ok;
-      if (mr.ok) {
-        tryFastForwardMainCheckout(cfg, 'afterMerge', 'after merge on remote — update local main');
-        tryClearMainCheckoutAfterMerge(cfg);
+      let syncOk = true;
+      try {
+        syncFeatureBranchWithRemoteBase(session, cfg.git.baseBranch);
+      } catch (e) {
+        syncOk = false;
+        mergeStatus = `Pre-merge sync failed: ${e instanceof Error ? e.message : String(e)}`;
+        state.mergeAttempted = true;
+        state.mergeSucceeded = false;
       }
+      if (syncOk) {
+        const mr = await mergeMgr.mergePr(session, owner, repo, prNumber!);
+        mergeStatus = mr.ok ? 'merged (requested via gh; may be queued pending CI / branch protection)' : mr.message;
+        state.mergeAttempted = true;
+        state.mergeSucceeded = mr.ok;
+        if (mr.ok) {
+          tryFastForwardMainCheckout(cfg, 'afterMerge', 'after merge on remote — update local main');
+        }
+      }
+    } else if (cfg.features.requireHumanApprovalBeforeMerge && mergeCheck.ok && prNumber !== null && owner && repo) {
+      mergeStatus =
+        'Merge skipped: requireHumanApprovalBeforeMerge is true — merge on GitHub manually (agent finished PR).';
     } else if (!mergeCheck.ok) {
       mergeStatus = mergeCheck.reason;
     } else if (!cfg.git.autoMerge) {
       mergeStatus = 'Merge skipped: autoMerge is false (sdlc.features.json or sdlc.config.ts).';
+    } else if (cfg.features.requireHumanApprovalBeforeMerge) {
+      mergeStatus = 'Merge skipped: requireHumanApprovalBeforeMerge is true.';
     } else if (!cfg.git.autoPush) {
       mergeStatus = 'Merge skipped: autoPush is false — merge requires a pushed branch.';
     } else if (prNumber === null) {

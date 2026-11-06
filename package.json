@@ -10,6 +10,7 @@
     "test:orchestrator": "npm --workspace orchestrator run test",
     "test:e2e": "playwright test",
     "sdlc": "npm --workspace orchestrator run sdlc",
+    "sdlc:auto": "node scripts/sdlc-auto.mjs",
     "security": "npm audit --audit-level=high",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down"
