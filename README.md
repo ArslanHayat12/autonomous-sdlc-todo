@@ -109,6 +109,7 @@ Environment overrides:
 | `SDLC_KEEP_WORKTREE` | `1` keeps `.sdlc-worktrees/…` after run |
 | `SDLC_SKIP_AUTO_PULL` | `1` skips all automatic `git fetch` + fast-forward merges on your base-branch checkout (see `autoPullMain*` in `sdlc.features.json`) |
 | `SDLC_SKIP_SYNC_BEFORE_MERGE` | `1` skips **rebase onto `origin/<base>`** + **`git push --force-with-lease`** before `gh pr merge` (default: sync so GitHub can merge when `main` moved during the run) |
+| `SDLC_MERGE_USE_AUTO` | `1` / `0` — override **`mergeUseGhAuto`**: try **`gh pr merge … --auto`** first; **`--delete-branch`** is added when **`cleanupFeatureBranchAfterMerge`** in `sdlc.config.ts` is true |
 | `SDLC_SKIP_RESET_MAIN_AFTER_MERGE` | `1` skips **`git reset --hard origin/<base>`** after a successful merge when **`resetMainCheckoutAfterMerge`** is true |
 | `SDLC_SKIP_ALIGN_MAIN_AFTER_RUN` | `1` skips **`git fetch` + `checkout -f <base>` + `reset --hard origin/<base>`** after each run when **`alignMainWithRemoteAfterRun`** is true |
 | `SDLC_CLEAN_UNTRACKED_AFTER_ALIGN` | `1` runs **`git clean -fd`** after align (deletes untracked files — use only if you accept data loss) |
@@ -128,7 +129,7 @@ Environment overrides:
 10. **Pushes** + **ensures PR labels exist** (`gh label create … --force` for each configured label, unless `SDLC_SKIP_LABEL_ENSURE=1`) + **`gh pr create`** + optional **pull on base branch** (`autoPullMainAfterPr`).  
 11. **AI review** loop (up to `maxAiReviewIterations`) with optional auto-fix commits + push.  
 12. **Sync branch for merge**: **`git fetch`**, **`git rebase origin/<baseBranch>`** on the feature branch, **`git push --force-with-lease`** (unless **`SDLC_SKIP_SYNC_BEFORE_MERGE=1`**) so GitHub does not report “not mergeable” when the default branch advanced mid-run.  
-13. **`gh pr merge --squash`** when policies pass — **never** `--admin`; branch protection / required reviews still apply; then optional **pull** so local `main` matches remote (`autoPullMainAfterMerge`).  
+13. **`gh pr merge`** (`--squash` per `mergeStrategy`) — tries **`--auto`** first when **`mergeUseGhAuto`** is true (or **`SDLC_MERGE_USE_AUTO=1`**), then a direct merge if queueing fails; adds **`--delete-branch`** when **`cleanupFeatureBranchAfterMerge`** is true — **never** `--admin`; branch protection still applies; optional **pull** on local `main` (`autoPullMainAfterMerge`).  
 14. Optional **hard reset** of local **`main`** to **`origin/main`** when **`resetMainCheckoutAfterMerge`** is true (clears leftover uncommitted noise — skipped if the tree is dirty or **`SDLC_SKIP_RESET_MAIN_AFTER_MERGE=1`**).  
 15. Optional **local Docker deploy** if merge succeeded and **`autoDeployLocal`** is true in `sdlc.features.json` **or** `SDLC_DEPLOY_LOCAL=1`.  
 16. Writes a Markdown report under `artifacts/sdlc-reports/` and `.sdlc/workflow-state.json`.
@@ -179,6 +180,7 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 | `autoPush` | `true` | Push the feature branch (`false` also disables PR creation; `gh pr create` needs a pushed branch). |
 | `autoPr` | `true` | `gh pr create` when commit + push ran. |
 | `autoMerge` | `true` | `gh pr merge` when policy allows (GitHub branch protection still applies). |
+| `mergeUseGhAuto` | `true` | `true`: run **`gh pr merge … --auto`** first (merge queue when checks block); `false`: direct merge only. Override with **`SDLC_MERGE_USE_AUTO`**. |
 | `autoDeployLocal` | `false` | After successful merge: run local `docker compose` deploy (requires `docker.enabled` in `sdlc.config.ts`). Env `SDLC_DEPLOY_LOCAL=1` still works. |
 | `syncUncommittedFromMain` | `true` | After `syncPathsFromMain`, copy **uncommitted** files from your main checkout into the worktree so `autoCommit` can include local edits (without committing on `main` first). Set `false` to only use committed state + listed sync paths + AI. |
 | `autoPullMainBeforeRun` | `true` | Before the worktree: if you're on a **clean** `git.baseBranch`, `git fetch` + `merge --ff-only origin/<branch>`. |

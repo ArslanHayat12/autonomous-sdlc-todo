@@ -58,6 +58,8 @@ export type GitPolicy = {
   autoPush: boolean;
   autoCreatePr: boolean;
   autoMerge: boolean;
+  /** When true, first run `gh pr merge ... --auto` (queue when branch protection blocks immediate merge). Env **`SDLC_MERGE_USE_AUTO`** overrides (`0`/`1`). */
+  mergeUseGhAuto: boolean;
   mergeStrategy: 'squash' | 'merge' | 'rebase';
   cleanupFeatureBranchAfterMerge: boolean;
   /** Never run these destructive operations on the user's main checkout */
@@ -222,6 +224,7 @@ export const sdlcConfig: SdlcConfig = {
     autoPush: true,
     autoCreatePr: true,
     autoMerge: true,
+    mergeUseGhAuto: true,
     mergeStrategy: 'squash',
     cleanupFeatureBranchAfterMerge: true,
     forbidForcePush: true,

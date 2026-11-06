@@ -23,6 +23,13 @@ function prState(
   return s;
 }
 
+function shouldTryGhMergeAuto(cfg: SdlcConfig): boolean {
+  const e = process.env.SDLC_MERGE_USE_AUTO?.trim();
+  if (e === '0' || e === 'false') return false;
+  if (e === '1' || e === 'true') return true;
+  return cfg.git.mergeUseGhAuto;
+}
+
 export class MergeManager {
   constructor(private readonly cfg: SdlcConfig) {}
 
@@ -52,11 +59,16 @@ export class MergeManager {
     const baseMerge = [String(prNumber), '--repo', `${owner}/${repo}`, strategyFlag];
     if (this.cfg.git.cleanupFeatureBranchAfterMerge) baseMerge.push('--delete-branch');
 
-    const withAuto = execCmd(session.path, 'gh', ['pr', 'merge', ...baseMerge, '--auto'], true);
-    let queued = !withAuto.startsWith('__CMD_FAIL__');
+    let queued = false;
+    let withAuto = '';
+    let direct = '';
+    if (shouldTryGhMergeAuto(this.cfg)) {
+      withAuto = execCmd(session.path, 'gh', ['pr', 'merge', ...baseMerge, '--auto'], true);
+      queued = !withAuto.startsWith('__CMD_FAIL__');
+    }
 
     if (!queued) {
-      const direct = execCmd(session.path, 'gh', ['pr', 'merge', ...baseMerge], true);
+      direct = execCmd(session.path, 'gh', ['pr', 'merge', ...baseMerge], true);
       if (direct.startsWith('__CMD_FAIL__')) {
         return {
           ok: false,
@@ -83,7 +95,7 @@ export class MergeManager {
     const finalState = prState(session, owner, repo, prNumber);
     return {
       ok: false,
-      message: `PR still ${finalState} after ${waitMs}ms. On GitHub: complete required checks/approvals, or merge manually. Last gh output: ${(queued ? withAuto : 'direct').slice(0, 400)}`,
+      message: `PR still ${finalState} after ${waitMs}ms. On GitHub: complete required checks/approvals, or merge manually. Last gh output: ${(queued ? withAuto : direct).slice(0, 400)}`,
     };
   }
 }
