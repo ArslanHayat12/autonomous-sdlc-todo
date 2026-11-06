@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
+/** Focus Todo — single-view task list (React + Vite); loads and mutates todos via the JSON API (`VITE_API_URL` or localhost:4000). */
 type Todo = { id: string; title: string; completed: boolean; createdAt: string };
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 
@@ -15,7 +16,7 @@ function App() {
     catch { setError('API unavailable. Start the app with Docker or npm run dev.'); }
   }, []);
   React.useEffect(() => {
-    console.log('Focus Todo app mounted');
+    console.log('[FocusTodo] App mounted');
   }, []);
   React.useEffect(() => { void load(); }, [load]);
   async function addTodo(event: React.FormEvent) {
@@ -24,7 +25,7 @@ function App() {
     if (!response.ok) { setError((await response.json()).error ?? 'Could not add task'); return; }
     setTitle(''); await load();
   }
-  console.log('API', API);
+  console.log('[FocusTodo] API base URL:', API);
   async function toggle(todo: Todo) { await fetch(`${API}/api/todos/${todo.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ completed: !todo.completed }) }); await load(); }
   async function remove(id: string) { await fetch(`${API}/api/todos/${id}`, { method: 'DELETE' }); await load(); }
   const visible = todos.filter(todo => filter === 'all' || (filter === 'active' ? !todo.completed : todo.completed));
