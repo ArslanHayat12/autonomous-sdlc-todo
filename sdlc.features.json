@@ -21,5 +21,6 @@
   "autoCommitMessageFromSkills": true,
   "resetMainCheckoutAfterMerge": true,
   "alignMainWithRemoteAfterRun": true,
-  "agentEditAutoPublish": false
+  "agentEditAutoPublish": false,
+  "mergeUseGhAuto": true
 }

@@ -71,6 +71,8 @@ export type SdlcFeatureFlags = {
    * Optional: **`SDLC_CLEAN_UNTRACKED_AFTER_ALIGN=1`** runs **`git clean -fd`** (removes untracked files — destructive).
    */
   alignMainWithRemoteAfterRun: boolean;
+  /** `gh pr merge ... --auto` then poll until merged (see `git.mergeUseGhAuto` in sdlc.config.ts). */
+  mergeUseGhAuto: boolean;
 };
 
 const defaultFlags: SdlcFeatureFlags = {
@@ -97,6 +99,7 @@ const defaultFlags: SdlcFeatureFlags = {
   resetMainCheckoutAfterMerge: false,
   agentEditAutoPublish: false,
   alignMainWithRemoteAfterRun: false,
+  mergeUseGhAuto: true,
 };
 
 function deepClone<T>(x: T): T {
@@ -143,6 +146,7 @@ export function applyFeatureFlagsToConfig(base: SdlcConfig, f: SdlcFeatureFlags)
   c.git.autoPush = flags.autoPush;
   c.git.autoCreatePr = flags.autoPr;
   c.git.autoMerge = flags.autoMerge;
+  c.git.mergeUseGhAuto = flags.mergeUseGhAuto;
 
   if (!flags.aiHeroSkills) {
     c.aiHero.discoveryEnabled = false;
