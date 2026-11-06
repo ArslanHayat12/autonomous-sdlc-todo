@@ -5,6 +5,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "sdlc": "tsx src/cli.ts",
+    "sdlc:worker": "tsx src/worker-cli.ts start",
+    "sdlc:worker-status": "tsx src/worker-cli.ts status",
+    "sdlc:worker-stop": "tsx src/worker-cli.ts stop",
     "test": "node --import tsx/esm --test src/worktree.test.ts"
   },
   "dependencies": { "openai": "^5.20.0" },

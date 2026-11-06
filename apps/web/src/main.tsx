@@ -14,6 +14,9 @@ function App() {
     try { const response = await fetch(`${API}/api/todos`); if (!response.ok) throw new Error('Could not load tasks'); setTodos(await response.json()); }
     catch { setError('API unavailable. Start the app with Docker or npm run dev.'); }
   }, []);
+  React.useEffect(() => {
+    console.log('Focus Todo app mounted');
+  }, []);
   React.useEffect(() => { void load(); }, [load]);
   async function addTodo(event: React.FormEvent) {
     event.preventDefault(); setError('');

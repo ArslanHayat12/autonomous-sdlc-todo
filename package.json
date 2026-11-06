@@ -12,6 +12,11 @@
     "sdlc": "npm --workspace orchestrator run sdlc",
     "sdlc:auto": "node scripts/sdlc-auto.mjs",
     "sdlc:publish": "node scripts/sdlc-publish-auto.mjs",
+    "sdlc:worker": "npm --workspace orchestrator run sdlc:worker",
+    "sdlc:status": "npm --workspace orchestrator run sdlc:worker-status",
+    "sdlc:stop": "npm --workspace orchestrator run sdlc:worker-stop",
+    "sdlc:dry-run": "npm run sdlc -- --dry-run",
+    "sdlc:resume": "npm run sdlc -- --resume",
     "security": "npm audit --audit-level=high",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down"
