@@ -62,6 +62,8 @@ export type GitPolicy = {
   cleanupFeatureBranchAfterMerge: boolean;
   /** Never run these destructive operations on the user's main checkout */
   forbidForcePush: true;
+  /** Remove prior sdlc/* worktrees before creating a new one (frees disk from old runs) */
+  pruneStaleWorktreesOnStart: boolean;
 };
 
 export type QualityGateId =
@@ -185,6 +187,7 @@ export const sdlcConfig: SdlcConfig = {
     mergeStrategy: 'squash',
     cleanupFeatureBranchAfterMerge: true,
     forbidForcePush: true,
+    pruneStaleWorktreesOnStart: true,
   },
   qualityGates: {
     eslint: { enabled: false, mandatory: false, timeoutMs: 120_000, retry: defaultRetry },

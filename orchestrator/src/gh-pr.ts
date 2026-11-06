@@ -1,4 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { execCmd, execGit } from './git-exec.js';
 import type { WorktreeSession } from './worktree.js';
 
@@ -19,6 +22,22 @@ export function resolveRemoteUrl(session: WorktreeSession): string | null {
   const out = execGit(session.path, ['remote', 'get-url', 'origin'], true).trim();
   if (out.startsWith('__GIT_FAIL__') || !out) return null;
   return out;
+}
+
+function writeBodyTemp(body: string): string {
+  const dir = mkdtempSync(path.join(tmpdir(), 'sdlc-gh-'));
+  const f = path.join(dir, 'pr-body.md');
+  writeFileSync(f, body, 'utf8');
+  return f;
+}
+
+function unlinkBodyTemp(file: string): void {
+  try {
+    unlinkSync(file);
+    unlinkSync(path.dirname(file));
+  } catch {
+    /* ignore */
+  }
 }
 
 export function parseGitHubRepoFromUrl(url: string): { owner: string; repo: string } | null {
@@ -81,26 +100,32 @@ export async function pushAndOpenPr(
   }
 
   const labelArgs = labels.flatMap(l => ['--label', l]);
-  const create = execCmd(
-    session.path,
-    'gh',
-    [
-      'pr',
-      'create',
-      '--repo',
-      `${owner}/${repo}`,
-      '--base',
-      base,
-      '--head',
-      session.branch,
-      '--title',
-      title,
-      '--body',
-      body,
-      ...labelArgs,
-    ],
-    true,
-  );
+  const bodyFile = writeBodyTemp(body);
+  let create: string;
+  try {
+    create = execCmd(
+      session.path,
+      'gh',
+      [
+        'pr',
+        'create',
+        '--repo',
+        `${owner}/${repo}`,
+        '--base',
+        base,
+        '--head',
+        session.branch,
+        '--title',
+        title,
+        '--body-file',
+        bodyFile,
+        ...labelArgs,
+      ],
+      true,
+    );
+  } finally {
+    unlinkBodyTemp(bodyFile);
+  }
 
   if (create.startsWith('__CMD_FAIL__')) {
     const view = execCmd(session.path, 'gh', ['pr', 'view', '--repo', `${owner}/${repo}`, '--json', 'url', '-q', '.url'], true).trim();
@@ -132,7 +157,13 @@ export async function updatePrDescription(session: WorktreeSession, body: string
   const owner = process.env.GITHUB_OWNER ?? parsed?.owner;
   const repo = process.env.GITHUB_REPO ?? parsed?.repo;
   if (!owner || !repo) return null;
-  const out = execCmd(session.path, 'gh', ['pr', 'edit', '--repo', `${owner}/${repo}`, '--body', body], true);
+  const bodyFile = writeBodyTemp(body);
+  let out: string;
+  try {
+    out = execCmd(session.path, 'gh', ['pr', 'edit', '--repo', `${owner}/${repo}`, '--body-file', bodyFile], true);
+  } finally {
+    unlinkBodyTemp(bodyFile);
+  }
   if (out.startsWith('__CMD_FAIL__')) return null;
   const url = execCmd(session.path, 'gh', ['pr', 'view', '--repo', `${owner}/${repo}`, '--json', 'url', '-q', '.url'], true).trim();
   return url.startsWith('http') ? url : null;

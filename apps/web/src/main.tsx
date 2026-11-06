@@ -21,6 +21,7 @@ function App() {
     if (!response.ok) { setError((await response.json()).error ?? 'Could not add task'); return; }
     setTitle(''); await load();
   }
+  console.log('API', API);
   async function toggle(todo: Todo) { await fetch(`${API}/api/todos/${todo.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ completed: !todo.completed }) }); await load(); }
   async function remove(id: string) { await fetch(`${API}/api/todos/${id}`, { method: 'DELETE' }); await load(); }
   const visible = todos.filter(todo => filter === 'all' || (filter === 'active' ? !todo.completed : todo.completed));

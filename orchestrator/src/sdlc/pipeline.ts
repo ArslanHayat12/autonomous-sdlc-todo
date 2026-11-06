@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { formatSkillsForPrompt } from '../hero-skills.js';
+import { formatSkillsForPrompt, type HeroSkill } from '../hero-skills.js';
 import { execGit } from '../git-exec.js';
 import { applyPatches } from '../patch.js';
 import { syncWorkingTreeFilesIntoWorktree } from '../sync-from-main.js';
@@ -27,11 +27,14 @@ import { RollbackManager } from './rollback-manager.js';
 import { WorkflowStateManager } from './workflow-state-manager.js';
 import { CommitMessageGenerator } from './commit-message-generator.js';
 import { ReportGenerator } from './report-generator.js';
+import { pruneStaleSdlcWorktrees } from './worktree-prune.js';
 import type { ExecutionReport, GateResult, SkillInvocation, WorkflowState } from './types.js';
 import { parseGitHubRepoFromUrl, resolveRemoteUrl } from '../gh-pr.js';
 import type { ReviewResult } from '../review-json.js';
+import type { SdlcConfigWithFeatures } from './feature-flags.js';
 
-const mainRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+/** Monorepo root (pipeline lives in orchestrator/src/sdlc/) */
+const mainRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 const logLines: string[] = [];
 function step(name: string, detail: string) {
@@ -70,7 +73,8 @@ function blockingReviewFindings(r: ReviewResult): boolean {
 }
 
 export async function runSdlcFromArgv(argv: string[]): Promise<void> {
-  const cfg = new ConfigurationManager().get();
+  const configMgr = new ConfigurationManager();
+  const cfg = await configMgr.get(mainRepoRoot);
   const parsed = parseArgv(argv);
   const stateMgr = new WorkflowStateManager(mainRepoRoot);
 
@@ -120,7 +124,7 @@ export async function runSdlcFromArgv(argv: string[]): Promise<void> {
 
 async function runFullPipeline(
   parsed: ParsedArgv,
-  cfg: ReturnType<ConfigurationManager['get']>,
+  cfg: SdlcConfigWithFeatures,
   stateMgr: WorkflowStateManager,
 ): Promise<void> {
   const instruction = parsed.instruction;
@@ -149,7 +153,15 @@ async function runFullPipeline(
 
   step('instruction', instruction);
   const origBranch = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim() || '(detached)';
-  step('git isolation', `Main checkout preserved; worktrees under ${path.join(mainRepoRoot, cfg.git.worktreesDirectory)}.`);
+  step(
+    'git isolation',
+    cfg.git.worktreesEnabled
+      ? `Main checkout preserved; linked worktrees under ${path.join(mainRepoRoot, cfg.git.worktreesDirectory)}.`
+      : `In-place branch mode (sdlc.features.json isolatedWorktree: false); will restore ${origBranch} after run.`,
+  );
+
+  await pruneStaleSdlcWorktrees(mainRepoRoot, cfg);
+  step('worktree prune', 'Stale sdlc worktrees removed when enabled in sdlc.config.ts (frees disk).');
 
   const baseSha = gitWt.resolveBaseSha(mainRepoRoot);
   step('git base', `Using base ${baseSha} (config baseBranch=${branchMgr.baseBranch})`);
@@ -175,28 +187,39 @@ async function runFullPipeline(
   try {
     step('worktree', `${session.path} branch ${session.branch}`);
 
-    const synced = await syncWorkingTreeFilesIntoWorktree(mainRepoRoot, session.path, [...cfg.syncPathsFromMain]);
-    if (synced.length) step('sync from main checkout', synced.join(', '));
+    if (session.path !== mainRepoRoot) {
+      const synced = await syncWorkingTreeFilesIntoWorktree(mainRepoRoot, session.path, [...cfg.syncPathsFromMain]);
+      if (synced.length) step('sync from main checkout', synced.join(', '));
+    } else {
+      step('sync from main checkout', 'Skipped (session path is main repo — already the same tree).');
+    }
 
     runInWorktree(session, 'npm', ['install']);
 
-    const registry = new AIHeroSkillRegistry(session.path, cfg.aiHero);
-    const discovered = await registry.discover();
-    const installInv = await registry.ensureOfficialCatalogIfRequested();
-    if (installInv) skillInvocations.push(installInv);
+    let selectedIds: string[] = [];
+    let discovered: HeroSkill[] = [];
+    if (cfg.features.aiHeroSkills) {
+      const registry = new AIHeroSkillRegistry(session.path, cfg.aiHero);
+      discovered = await registry.discover();
+      const installInv = await registry.ensureOfficialCatalogIfRequested();
+      if (installInv) skillInvocations.push(installInv);
 
-    const router = new SkillRouter(cfg.aiHero);
-    const selected = router.selectForInstruction(instruction, discovered);
-    const selectedIds = selected.map(s => s.id);
-    for (const v of registry.validate(selectedIds)) {
-      skillInvocations.push({
-        ...v,
-        ran: v.evidence.includes('SKILL.md present'),
-        mechanism: v.ran
-          ? 'SKILL.md loaded and injected into OpenAI plan/review prompts (Node orchestrator; not Cursor tool runtime)'
-          : v.mechanism,
-      });
+      const router = new SkillRouter(cfg.aiHero);
+      const selected = router.selectForInstruction(instruction, discovered);
+      selectedIds = selected.map(s => s.id);
+      for (const v of registry.validate(selectedIds)) {
+        skillInvocations.push({
+          ...v,
+          ran: v.evidence.includes('SKILL.md present'),
+          mechanism: v.ran
+            ? 'SKILL.md loaded and injected into OpenAI plan/review prompts (Node orchestrator; not Cursor tool runtime)'
+            : v.mechanism,
+        });
+      }
+    } else {
+      step('ai hero skills', 'Off (sdlc.features.json aiHeroSkills: false).');
     }
+    const selected = discovered.filter(s => selectedIds.includes(s.id));
 
     const skillsBlock = formatSkillsForPrompt(selected);
     await mkdir(path.join(session.path, 'artifacts'), { recursive: true });
@@ -207,31 +230,36 @@ async function runFullPipeline(
     state.phase = 'implement';
     await stateMgr.save(cfg.workflow.stateFile, state);
 
-    let implAttempt = 0;
-    while (implAttempt < cfg.workflow.maxImplementationRetries) {
-      implAttempt++;
-      if (client) {
-        const agent = new AgentExecutor(client, model);
-        const r = await agent.implement(instruction, {
-          paths: ['apps/web/src/main.tsx', 'apps/api/src/index.ts'],
-          repoRoot: session.path,
-        });
-        await agent.apply(session.path, r.patches);
-        implementationSummary = r.summary;
-      } else {
-        const fb = await fallbackConsoleLogPatch(session.path, instruction);
-        if (fb.length) {
-          await applyPatches(session.path, fb);
-          implementationSummary =
-            'Fallback: minimal change (set OPENAI_API_KEY for full OpenAI implementation).';
+    if (!cfg.features.autoImplement) {
+      implementationSummary = 'Auto-implement disabled (sdlc.features.json autoImplement: false); no code edits applied.';
+      step('implement', implementationSummary);
+    } else {
+      let implAttempt = 0;
+      while (implAttempt < cfg.workflow.maxImplementationRetries) {
+        implAttempt++;
+        if (client) {
+          const agent = new AgentExecutor(client, model);
+          const r = await agent.implement(instruction, {
+            paths: ['apps/web/src/main.tsx', 'apps/api/src/index.ts'],
+            repoRoot: session.path,
+          });
+          await agent.apply(session.path, r.patches);
+          implementationSummary = r.summary;
         } else {
-          implementationSummary = 'No OPENAI_API_KEY: skipped automated code edits.';
+          const fb = await fallbackConsoleLogPatch(session.path, instruction);
+          if (fb.length) {
+            await applyPatches(session.path, fb);
+            implementationSummary =
+              'Fallback: minimal change (set OPENAI_API_KEY for full OpenAI implementation).';
+          } else {
+            implementationSummary = 'No OPENAI_API_KEY: skipped automated code edits.';
+          }
         }
-      }
-      const buildTry = testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], cfg.qualityGates.build.timeoutMs);
-      if (buildTry.ok) break;
-      if (implAttempt >= cfg.workflow.maxImplementationRetries) {
-        throw new Error(`Implementation failed build after ${implAttempt} attempts: ${buildTry.output.slice(-2000)}`);
+        const buildTry = testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], cfg.qualityGates.build.timeoutMs);
+        if (buildTry.ok) break;
+        if (implAttempt >= cfg.workflow.maxImplementationRetries) {
+          throw new Error(`Implementation failed build after ${implAttempt} attempts: ${buildTry.output.slice(-2000)}`);
+        }
       }
     }
 
@@ -298,19 +326,42 @@ async function runFullPipeline(
       .join('\n');
 
     const title = commitGen.generateTitle('sdlc', implementationSummary || instruction);
+    const archNote = cfg.git.worktreesEnabled
+      ? 'Implementation in isolated git worktree linked from main; main checkout untouched.'
+      : 'Implementation on a new branch in the main clone (isolatedWorktree: false); branch restored after run.';
     const bodyParts: Parameters<typeof commitGen.generateBody>[0] = {
       why: `Autonomous SDLC for: ${instruction}`,
       what: implementationSummary,
       components: ['apps/web', 'apps/api', 'orchestrator'],
-      architecture: 'Implementation in isolated git worktree linked from main; main checkout untouched.',
+      architecture: archNote,
       security: 'npm audit --audit-level=high; optional DAST HTTP smoke when enabled.',
       tests: gateSummary.slice(0, 4000),
       breaking: 'None intended.',
     };
     const commitBody = commitGen.generateBody(bodyParts);
 
-    await gitCommitAll(session, title, commitBody);
-    if (cfg.git.autoPush) gitPush(session);
+    let committed = false;
+    if (!cfg.git.autoCommit) {
+      step('git commit', 'Skipped (sdlc.features.json autoCommit: false). Changes may be uncommitted in the session directory.');
+    } else {
+      committed = await gitCommitAll(session, title, commitBody);
+      if (!committed) step('git commit', 'No changes to commit after gates.');
+    }
+    if (cfg.git.autoPush) {
+      if (!cfg.git.autoCommit) {
+        step('git push', 'Skipped (autoCommit is false in sdlc.features.json — commit locally before pushing).');
+      } else if (!committed) {
+        step('git push', 'Skipped (no new commit).');
+      } else {
+        try {
+          gitPush(session);
+        } catch (e) {
+          step('git push', `Failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    } else {
+      step('git push', 'Skipped (sdlc.features.json autoPush: false).');
+    }
 
     const commitSha = execGit(session.path, ['rev-parse', 'HEAD']).trim();
     const { stat: diffStat, files: changedFiles } = commitGen.describeDiff(session.path);
@@ -334,12 +385,23 @@ async function runFullPipeline(
     ].join('\n');
 
     if (cfg.git.autoCreatePr) {
-      const pr = await prMgr.createOrUpdate(session, instruction, prBodyDraft);
-      prUrl = pr.prUrl;
-      prNumber = pr.prNumber;
-      state.prUrl = prUrl;
-      state.prNumber = prNumber;
-      step('github', pr.message);
+      if (!cfg.git.autoPush || !cfg.git.autoCommit) {
+        step(
+          'github',
+          'PR creation skipped: autoPr needs both autoCommit and autoPush (see sdlc.features.json).',
+        );
+      } else if (!committed) {
+        step('github', 'PR creation skipped: no commit was pushed.');
+      } else {
+        const pr = await prMgr.createOrUpdate(session, instruction, prBodyDraft);
+        prUrl = pr.prUrl;
+        prNumber = pr.prNumber;
+        state.prUrl = prUrl;
+        state.prNumber = prNumber;
+        step('github', pr.message);
+      }
+    } else {
+      step('github', 'PR creation skipped (sdlc.features.json autoPr: false).');
     }
 
     state.phase = 'review';
@@ -347,49 +409,65 @@ async function runFullPipeline(
 
     const reviewPaths = ['apps/web/src/main.tsx', 'apps/api/src/index.ts'];
 
-    if (client && cfg.aiHero.executionEnabled) {
+    const runAiReview = Boolean(client && cfg.features.aiReview && cfg.aiHero.executionEnabled);
+    if (runAiReview && client) {
       const reviewer = new CodeReviewOrchestrator(client, model);
       const fixer = new AutoFixEngine(reviewer);
       let iter = 0;
       lastReview = await reviewer.runIteration(instruction, skillsBlock, session, reviewPaths);
       reviewText = lastReview.findings.map(f => `[${f.severity}] ${f.file}: ${f.issue}`).join('\n');
 
-      while (iter < cfg.workflow.maxAiReviewIterations) {
-        const applied = await fixer.applyPatchesIfAny(session, lastReview);
-        if (applied) {
-          const b = testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], cfg.qualityGates.build.timeoutMs);
-          if (!b.ok) throw new Error(`Review fix broke build: ${b.output.slice(-1500)}`);
-          await gitCommitAll(
-            session,
-            `fix(sdlc): address review iteration ${iter + 1}`,
-            `Automated fixes from AI Hero review.\n\nFindings addressed:\n${reviewText.slice(0, 2000)}`,
-          );
-          if (cfg.git.autoPush) gitPush(session);
+      if (!cfg.git.autoCommit) {
+        step('ai review', 'Fix loop skipped (sdlc.features.json autoCommit: false); first-pass findings only.');
+      } else {
+        while (iter < cfg.workflow.maxAiReviewIterations) {
+          const applied = await fixer.applyPatchesIfAny(session, lastReview);
+          if (applied) {
+            const b = testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], cfg.qualityGates.build.timeoutMs);
+            if (!b.ok) throw new Error(`Review fix broke build: ${b.output.slice(-1500)}`);
+            await gitCommitAll(
+              session,
+              `fix(sdlc): address review iteration ${iter + 1}`,
+              `Automated fixes from AI Hero review.\n\nFindings addressed:\n${reviewText.slice(0, 2000)}`,
+            );
+            if (cfg.git.autoPush) gitPush(session);
+          }
+          iter++;
+          if (!lastReview.needsMoreChanges && !blockingReviewFindings(lastReview)) break;
+          if (iter >= cfg.workflow.maxAiReviewIterations) break;
+          lastReview = await reviewer.runIteration(instruction, skillsBlock, session, reviewPaths);
+          reviewText = lastReview.findings.map(f => `[${f.severity}] ${f.file}: ${f.issue}`).join('\n');
+          if (!lastReview.needsMoreChanges && !blockingReviewFindings(lastReview)) break;
         }
-        iter++;
-        if (!lastReview.needsMoreChanges && !blockingReviewFindings(lastReview)) break;
-        if (iter >= cfg.workflow.maxAiReviewIterations) break;
-        lastReview = await reviewer.runIteration(instruction, skillsBlock, session, reviewPaths);
-        reviewText = lastReview.findings.map(f => `[${f.severity}] ${f.file}: ${f.issue}`).join('\n');
-        if (!lastReview.needsMoreChanges && !blockingReviewFindings(lastReview)) break;
       }
 
       const fullPr =
         prBodyDraft +
         `\n\n## AI Hero code review\n\n${reviewText || 'No findings.'}\n\n## Log (tail)\n\n${logLines.slice(-30).join('\n')}`;
-      await prMgr.updateBody(session, fullPr);
+      if (prNumber !== null) {
+        await prMgr.updateBody(session, fullPr);
+      } else {
+        step('github', 'PR description update skipped (no PR number).');
+      }
     } else {
-      reviewText = client ? '' : 'AI review skipped (OPENAI_API_KEY not set). Skills were still loaded for routing metadata.';
-      await prMgr.updateBody(
-        session,
-        prBodyDraft + `\n\n## AI Hero code review\n\n${reviewText}\n`,
-      );
+      if (!client) {
+        reviewText = 'AI review skipped (OPENAI_API_KEY not set).';
+      } else if (!cfg.features.aiReview) {
+        reviewText = 'AI review skipped (sdlc.features.json aiReview: false).';
+      } else if (!cfg.aiHero.executionEnabled) {
+        reviewText = 'AI review skipped (AI Hero execution disabled in sdlc.config.ts or features).';
+      } else {
+        reviewText = 'AI review skipped.';
+      }
+      if (prNumber !== null) {
+        await prMgr.updateBody(session, prBodyDraft + `\n\n## AI Hero code review\n\n${reviewText}\n`);
+      }
     }
 
     state.phase = 'merge';
     await stateMgr.save(cfg.workflow.stateFile, state);
 
-    const blockMergeReview = client ? blockingReviewFindings(lastReview) : false;
+    const blockMergeReview = runAiReview ? blockingReviewFindings(lastReview) : false;
     const mergeCheck = mergeMgr.canAutoMerge(gateResults, blockMergeReview);
 
     const remote = resolveRemoteUrl(session);
@@ -406,7 +484,7 @@ async function runFullPipeline(
       repo;
 
     if (canMerge) {
-      const mr = mergeMgr.mergePr(session, owner, repo, prNumber!);
+      const mr = await mergeMgr.mergePr(session, owner, repo, prNumber!);
       mergeStatus = mr.ok ? 'merged (requested via gh; may be queued pending CI / branch protection)' : mr.message;
       state.mergeAttempted = true;
       state.mergeSucceeded = mr.ok;
@@ -419,7 +497,9 @@ async function runFullPipeline(
     state.phase = 'deploy';
     await stateMgr.save(cfg.workflow.stateFile, state);
 
-    if (cfg.docker.enabled && state.mergeSucceeded && process.env.SDLC_DEPLOY_LOCAL === '1') {
+    const deployLocalEnv = process.env.SDLC_DEPLOY_LOCAL === '1';
+    const wantDeploy = cfg.features.autoDeployLocal || deployLocalEnv;
+    if (cfg.docker.enabled && state.mergeSucceeded && wantDeploy) {
       const short = execGit(mainRepoRoot, ['rev-parse', '--short', 'HEAD']).trim();
       const dep = deployMgr.deployLocal(mainRepoRoot, short);
       deployStatus = dep.ok ? 'docker compose up -d --build' : dep.output.slice(-2000);
@@ -431,7 +511,7 @@ async function runFullPipeline(
     } else {
       deployStatus =
         cfg.docker.enabled && state.mergeSucceeded
-          ? 'Skipped: set SDLC_DEPLOY_LOCAL=1 to run local compose after merge.'
+          ? 'Skipped: set autoDeployLocal in sdlc.features.json or SDLC_DEPLOY_LOCAL=1 to run compose after merge.'
           : 'Skipped (merge not succeeded or Docker disabled).';
     }
 
@@ -460,10 +540,13 @@ async function runFullPipeline(
     const reportPath = await reportGen.writeMarkdown(mainRepoRoot, cfg.workflow.reportDir, report);
     step('report', reportPath);
 
+    const worktreeNote = cfg.git.worktreesEnabled
+      ? ' (worktree removed unless SDLC_KEEP_WORKTREE=1)'
+      : ' (feature branch removed; main checkout restored)';
     console.log(
-      `\nFinished.\n  Report: ${reportPath} (inside worktree until cleanup)\n  PR: ${prUrl ?? 'n/a'}\n  Merge: ${mergeStatus}\n  Main checkout: untouched.\n`,
+      `\nFinished.\n  Report: ${reportPath}${worktreeNote}\n  PR: ${prUrl ?? 'n/a'}\n  Merge: ${mergeStatus}\n`,
     );
   } finally {
-    await gitWt.remove(session);
+    await gitWt.remove(session, origBranch);
   }
 }

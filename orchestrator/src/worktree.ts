@@ -76,6 +76,35 @@ export async function createIsolatedWorktree(
   return { path: wtPath, branch, mainRepoRoot, baseSha };
 }
 
+/**
+ * Create feature branch in the main clone (no extra worktree). Requires a **clean** working tree.
+ * @see sdlc.features.json `isolatedWorktree: false`
+ */
+export function createFeatureBranchInPlace(
+  mainRepoRoot: string,
+  baseSha: string,
+  options: WorktreeOptions = {},
+): WorktreeSession {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const prefix = options.branchPrefix ?? 'sdlc/agent-';
+  const branch = `${prefix}${stamp}`;
+  const dirty = trim(execGit(mainRepoRoot, ['status', '--porcelain'], true));
+  if (dirty && !dirty.startsWith('__GIT_FAIL__')) {
+    throw new Error(
+      'Working tree is not clean. Set "isolatedWorktree": true in sdlc.features.json (default), or commit/stash before in-place mode.',
+    );
+  }
+  execGit(mainRepoRoot, ['switch', '-c', branch, baseSha]);
+  return { path: mainRepoRoot, branch, mainRepoRoot, baseSha };
+}
+
+/** Restore previous branch and delete the feature branch after an in-place run. */
+export function removeInPlaceSession(session: WorktreeSession, restoreBranch: string): void {
+  if (session.path !== session.mainRepoRoot) return;
+  execGit(session.mainRepoRoot, ['switch', restoreBranch], true);
+  execGit(session.mainRepoRoot, ['branch', '-D', session.branch], true);
+}
+
 export async function removeWorktree(session: WorktreeSession): Promise<void> {
   const keep = process.env.SDLC_KEEP_WORKTREE === '1' || process.env.SDLC_KEEP_WORKTREE === 'true';
   if (keep) return;

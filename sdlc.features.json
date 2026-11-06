@@ -1,0 +1,13 @@
+{
+  "isolatedWorktree": true,
+  "pruneStaleWorktreesOnStart": true,
+  "autoImplement": true,
+  "aiHeroSkills": true,
+  "aiReview": false,
+  "qualityGates": false,
+  "autoCommit": true,
+  "autoPush": true,
+  "autoPr": true,
+  "autoMerge": true,
+  "autoDeployLocal": false
+}
