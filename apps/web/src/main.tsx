@@ -6,6 +6,8 @@ import './style.css';
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 
 function App() {
+  React.useEffect(() => { console.log('[SDLC]', 'orchestrator task'); }, []);
+
   const [todos, setTodos] = React.useState<Todo[]>([]);
   const [title, setTitle] = React.useState('');
   const [filter, setFilter] = React.useState<'all' | 'active' | 'done'>('all');
