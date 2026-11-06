@@ -160,10 +160,10 @@
     "@babel/helper-string-parser" "^7.29.11"
     "@babel/helper-validator-identifier" "^7.29.7"
 
-"@esbuild/linux-arm64@0.28.2":
+"@esbuild/darwin-arm64@0.28.2":
   version "0.28.2"
-  resolved "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.28.2.tgz"
-  integrity sha512-pW4AC0P3it8c7do9MVM4p51FzHzdM/TZrerurgRcHJ2WTa1VQ1CIq18xncfpBJw4ojkiZZrKW2yIBWBP92j6Ug==
+  resolved "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.28.2.tgz"
+  integrity sha512-n4KqkOQrraxHJcgjM1RvwbigfQKIKJVpM7xp+KsxiyUSrRdIXnt73VhrPAx0fV44hgfmIVKjxMN9J1t5jySVkw==
 
 "@jridgewell/gen-mapping@^0.3.12", "@jridgewell/gen-mapping@^0.3.5":
   version "0.3.13"
@@ -211,25 +211,25 @@
   resolved "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.0-rc.3.tgz"
   integrity sha512-eybk3TjzzzV97Dlj5c+XrBFW57eTNhzod66y9HrBlzJ6NsCrWCp/2kaPS3K9wJmurBC0Tdw4yPjXKZqlznim3Q==
 
-"@rollup/rollup-linux-arm64-musl@4.67.5":
+"@rollup/rollup-darwin-arm64@4.67.5":
   version "4.67.5"
-  resolved "https://registry.npmjs.org/@rollup/rollup-linux-arm64-musl/-/rollup-linux-arm64-musl-4.67.5.tgz"
-  integrity sha512-heflX7ENhL8eHmLcUxDEHCSK8CKLyPprysb2JGoSTh5Ip7nHrzIRc+2USyxul3nxi98H8pGxJIEDEpURlS1X5A==
+  resolved "https://registry.npmjs.org/@rollup/rollup-darwin-arm64/-/rollup-darwin-arm64-4.67.5.tgz"
+  integrity sha512-SNamgdrY69oPdBrQV9fKGo6PSmKcVhyn0D0jnDmcqgRJvrxQGGBhtekOHTUJ7TCgkW0nE8XMH9v2CwXmjNIzVA==
 
-"@todo/api@file:/workspace/apps/api":
+"@todo/api@file:/Users/arslan/Downloads/autonomous-sdlc-todo/.sdlc-worktrees/sdlc__agent-2026-11-06T12-15-04-141Z/apps/api":
   version "1.0.0"
   resolved "file:apps/api"
   dependencies:
     cors "^2.8.5"
     express "^5.1.0"
 
-"@todo/orchestrator@file:/workspace/orchestrator":
+"@todo/orchestrator@file:/Users/arslan/Downloads/autonomous-sdlc-todo/.sdlc-worktrees/sdlc__agent-2026-11-06T12-15-04-141Z/orchestrator":
   version "1.0.0"
   resolved "file:orchestrator"
   dependencies:
     openai "^5.20.0"
 
-"@todo/web@file:/workspace/apps/web":
+"@todo/web@file:/Users/arslan/Downloads/autonomous-sdlc-todo/.sdlc-worktrees/sdlc__agent-2026-11-06T12-15-04-141Z/apps/web":
   version "1.0.0"
   resolved "file:apps/web"
   dependencies:
@@ -704,6 +704,11 @@ fresh@^2.0.0:
   version "2.0.0"
   resolved "https://registry.npmjs.org/fresh/-/fresh-2.0.0.tgz"
   integrity sha512-Rx/WycZ60HOaqLKAi6cHRKKI7zxWbJ31MhntmtwMoaTeF7XFH9hhBp8vITaMidfljRQ6eYWCKkaTK+ykVJHP2A==
+
+fsevents@~2.3.2, fsevents@~2.3.3:
+  version "2.3.3"
+  resolved "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz"
+  integrity sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==
 
 function-bind@^1.1.2:
   version "1.1.2"
