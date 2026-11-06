@@ -10,5 +10,9 @@
   "autoPr": true,
   "autoMerge": true,
   "autoDeployLocal": false,
-  "syncUncommittedFromMain": true
+  "syncUncommittedFromMain": true,
+  "autoPullMainBeforeRun": true,
+  "autoPullMainAfterPr": true,
+  "autoPullMainAfterMerge": true,
+  "autoCommitMessageFromSkills": true
 }
