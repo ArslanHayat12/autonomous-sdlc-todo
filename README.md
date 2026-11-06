@@ -55,21 +55,23 @@ Environment overrides:
 | `SDLC_DEPLOY_LOCAL` | `1` runs `docker compose up -d --build` after **successful** `gh pr merge` (also set **`autoDeployLocal`** in `sdlc.features.json` to default-on without env) |
 | `SDLC_INSTALL_AIHERO_SKILLS` | `1` runs `npx skills@latest add mattpocock/skills` when `skills/` is empty |
 | `SDLC_KEEP_WORKTREE` | `1` keeps `.sdlc-worktrees/…` after run |
+| `SDLC_SKIP_AUTO_PULL` | `1` skips all automatic `git fetch` + fast-forward merges on your base-branch checkout (see `autoPullMain*` in `sdlc.features.json`) |
 
 ## What `npm run sdlc` does
 
 1. Reads **`orchestrator/sdlc.config.ts`** (compiled to `dist/sdlc.config.js` at build time) and merges optional **`sdlc.features.json`** at the repo root.  
-2. By default creates a **linked Git worktree** under `.sdlc-worktrees/` (**main checkout not modified**). Set `isolatedWorktree: false` in `sdlc.features.json` to use a new branch in the main clone instead (requires a **clean** working tree).  
-3. Syncs paths from `syncPathsFromMain`, then (by default) **uncommitted files from your main checkout** into the worktree — isolated runs no longer ignore files you have not committed on `main`.  
-4. **Plans** (OpenAI) using selected `skills/*/SKILL.md` content.  
-5. **Implements** via OpenAI JSON patches (or a tiny fallback when no key).  
-6. Runs **quality gates** from config (build, audit, e2e, optional DAST curl, optional `docker compose build`). **Skipped** gates are logged as **skipped**, not **passed**.  
-7. **Commits** with a Conventional-Commit **title + body** describing why/what/tests/security.  
-8. **Pushes** + **ensures PR labels exist** (`gh label create … --force` for each configured label, unless `SDLC_SKIP_LABEL_ENSURE=1`) + **`gh pr create`**.  
-9. **AI review** loop (up to `maxAiReviewIterations`) with optional auto-fix commits + push.  
-10. **`gh pr merge --squash`** when policies pass — **never** `--admin`; branch protection / required reviews still apply.  
-11. Optional **local Docker deploy** if merge succeeded and **`autoDeployLocal`** is true in `sdlc.features.json` **or** `SDLC_DEPLOY_LOCAL=1`.  
-12. Writes a Markdown report under `artifacts/sdlc-reports/` and `.sdlc/workflow-state.json`.
+2. Optionally **fast-forwards** a **clean** base-branch checkout (`autoPullMainBeforeRun`).  
+3. By default creates a **linked Git worktree** under `.sdlc-worktrees/` (**main checkout not modified**). Set `isolatedWorktree: false` in `sdlc.features.json` to use a new branch in the main clone instead (requires a **clean** working tree).  
+4. Syncs paths from `syncPathsFromMain`, then (by default) **uncommitted files from your main checkout** into the worktree — isolated runs no longer ignore files you have not committed on `main`.  
+5. **Plans** (OpenAI) using selected `skills/*/SKILL.md` content.  
+6. **Implements** via OpenAI JSON patches (or a tiny fallback when no key).  
+7. Runs **quality gates** from config (build, audit, e2e, optional DAST curl, optional `docker compose build`). **Skipped** gates are logged as **skipped**, not **passed**.  
+8. **Commits** with a Conventional-Commit **title + body** (OpenAI + selected skills when **`autoCommitMessageFromSkills`** and `OPENAI_API_KEY` are set; else template).  
+9. **Pushes** + **ensures PR labels exist** (`gh label create … --force` for each configured label, unless `SDLC_SKIP_LABEL_ENSURE=1`) + **`gh pr create`** + optional **pull on base branch** (`autoPullMainAfterPr`).  
+10. **AI review** loop (up to `maxAiReviewIterations`) with optional auto-fix commits + push.  
+11. **`gh pr merge --squash`** when policies pass — **never** `--admin`; branch protection / required reviews still apply; then optional **pull** so local `main` matches remote (`autoPullMainAfterMerge`).  
+12. Optional **local Docker deploy** if merge succeeded and **`autoDeployLocal`** is true in `sdlc.features.json` **or** `SDLC_DEPLOY_LOCAL=1`.  
+13. Writes a Markdown report under `artifacts/sdlc-reports/` and `.sdlc/workflow-state.json`.
 
 ## Run the app locally
 
@@ -112,6 +114,10 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 | `autoMerge` | `true` | `gh pr merge` when policy allows (GitHub branch protection still applies). |
 | `autoDeployLocal` | `false` | After successful merge: run local `docker compose` deploy (requires `docker.enabled` in `sdlc.config.ts`). Env `SDLC_DEPLOY_LOCAL=1` still works. |
 | `syncUncommittedFromMain` | `true` | After `syncPathsFromMain`, copy **uncommitted** files from your main checkout into the worktree so `autoCommit` can include local edits (without committing on `main` first). Set `false` to only use committed state + listed sync paths + AI. |
+| `autoPullMainBeforeRun` | `true` | Before the worktree: if you're on a **clean** `git.baseBranch`, `git fetch` + `merge --ff-only origin/<branch>`. |
+| `autoPullMainAfterPr` | `true` | After a PR is created: same **fast-forward pull** on your `main` checkout (if clean and on base branch). |
+| `autoPullMainAfterMerge` | `true` | After **`gh pr merge` succeeds**: fast-forward **local** `main` so it includes the merge. |
+| `autoCommitMessageFromSkills` | `true` | If `OPENAI_API_KEY` is set and **Hero skills** were selected, use the model to draft the conventional commit (aligned with `SKILL.md` context); otherwise use the template. |
 
 ## Honest limits
 

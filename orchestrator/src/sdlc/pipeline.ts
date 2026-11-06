@@ -26,6 +26,7 @@ import { DeploymentManager } from './deployment-manager.js';
 import { RollbackManager } from './rollback-manager.js';
 import { WorkflowStateManager } from './workflow-state-manager.js';
 import { CommitMessageGenerator } from './commit-message-generator.js';
+import { buildCommitMessageWithSkills } from './commit-message-from-skills.js';
 import { ReportGenerator } from './report-generator.js';
 import { pruneStaleSdlcWorktrees } from './worktree-prune.js';
 import type { ExecutionReport, GateResult, SkillInvocation, WorkflowState } from './types.js';
@@ -70,6 +71,54 @@ function gitPush(session: WorktreeSession): void {
 
 function blockingReviewFindings(r: ReviewResult): boolean {
   return r.findings.some(f => f.severity === 'critical' || f.severity === 'high');
+}
+
+type PullMainWhen = 'beforeRun' | 'afterPr' | 'afterMerge';
+
+/**
+ * Fast-forward local base branch to origin (safe pull). Skips if not on base, dirty tree, or feature off.
+ */
+function tryFastForwardMainCheckout(cfg: SdlcConfigWithFeatures, when: PullMainWhen, detail: string): void {
+  if (process.env.SDLC_SKIP_AUTO_PULL === '1') {
+    return;
+  }
+  const allow =
+    when === 'beforeRun'
+      ? cfg.features.autoPullMainBeforeRun
+      : when === 'afterPr'
+        ? cfg.features.autoPullMainAfterPr
+        : cfg.features.autoPullMainAfterMerge;
+  if (!allow) return;
+
+  const base = cfg.git.baseBranch;
+  const cur = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim();
+  if (cur.startsWith('__GIT_FAIL__')) {
+    step('git pull (main checkout)', `Skipped (${detail}): could not read current branch.`);
+    return;
+  }
+  if (cur !== base) {
+    step('git pull (main checkout)', `Skipped (${detail}): on ${cur}, not ${base}.`);
+    return;
+  }
+  const dirty = execGit(mainRepoRoot, ['status', '--porcelain'], true).trim();
+  if (dirty && !dirty.startsWith('__GIT_FAIL__')) {
+    step('git pull (main checkout)', `Skipped (${detail}): ${base} has uncommitted changes.`);
+    return;
+  }
+  const fetchOut = execGit(mainRepoRoot, ['fetch', 'origin'], true);
+  if (fetchOut.startsWith('__GIT_FAIL__')) {
+    step('git pull (main checkout)', `fetch failed (${detail}): ${fetchOut.slice(0, 280)}`);
+    return;
+  }
+  const mergeOut = execGit(mainRepoRoot, ['merge', '--ff-only', `origin/${base}`], true);
+  if (mergeOut.startsWith('__GIT_FAIL__')) {
+    step(
+      'git pull (main checkout)',
+      `Fast-forward not possible (${detail}): ${mergeOut.slice(0, 400)}`,
+    );
+    return;
+  }
+  step('git pull (main checkout)', `Fast-forwarded ${base} to origin/${base} (${detail}).`);
 }
 
 export async function runSdlcFromArgv(argv: string[]): Promise<void> {
@@ -162,6 +211,8 @@ async function runFullPipeline(
 
   await pruneStaleSdlcWorktrees(mainRepoRoot, cfg);
   step('worktree prune', 'Stale sdlc worktrees removed when enabled in sdlc.config.ts (frees disk).');
+
+  tryFastForwardMainCheckout(cfg, 'beforeRun', 'before worktree');
 
   const baseSha = gitWt.resolveBaseSha(mainRepoRoot);
   step('git base', `Using base ${baseSha} (config baseBranch=${branchMgr.baseBranch})`);
@@ -333,7 +384,6 @@ async function runFullPipeline(
       .map(g => `- **${g.id}**: ${g.status}${g.mandatory ? ' (mandatory)' : ' (optional)'} — ${g.output.slice(0, 120)}…`)
       .join('\n');
 
-    const title = commitGen.generateTitle('sdlc', implementationSummary || instruction);
     const archNote = cfg.git.worktreesEnabled
       ? 'Implementation in isolated git worktree linked from main; main checkout untouched.'
       : 'Implementation on a new branch in the main clone (isolatedWorktree: false); branch restored after run.';
@@ -346,7 +396,26 @@ async function runFullPipeline(
       tests: gateSummary.slice(0, 4000),
       breaking: 'None intended.',
     };
-    const commitBody = commitGen.generateBody(bodyParts);
+
+    const useSkillCommit =
+      Boolean(client) && cfg.features.aiHeroSkills && cfg.features.autoCommitMessageFromSkills && selectedIds.length > 0;
+    const { title, body: commitBody } = useSkillCommit
+      ? await buildCommitMessageWithSkills({
+          client,
+          model,
+          instruction,
+          selectedSkills: selected,
+          implementationSummary,
+          gateSummary,
+          fallbackBody: bodyParts,
+        })
+      : {
+          title: commitGen.generateTitle('sdlc', implementationSummary || instruction),
+          body: commitGen.generateBody(bodyParts),
+        };
+    if (useSkillCommit) {
+      step('commit message', 'Drafted from OpenAI + selected Hero skills (sdlc.features.json autoCommitMessageFromSkills).');
+    }
 
     let committed = false;
     if (!cfg.git.autoCommit) {
@@ -407,6 +476,7 @@ async function runFullPipeline(
         state.prUrl = prUrl;
         state.prNumber = prNumber;
         step('github', pr.message);
+        tryFastForwardMainCheckout(cfg, 'afterPr', 'after PR opened — local main may include merge');
       }
     } else {
       step('github', 'PR creation skipped (sdlc.features.json autoPr: false).');
@@ -496,6 +566,9 @@ async function runFullPipeline(
       mergeStatus = mr.ok ? 'merged (requested via gh; may be queued pending CI / branch protection)' : mr.message;
       state.mergeAttempted = true;
       state.mergeSucceeded = mr.ok;
+      if (mr.ok) {
+        tryFastForwardMainCheckout(cfg, 'afterMerge', 'after merge on remote — update local main');
+      }
     } else if (!mergeCheck.ok) {
       mergeStatus = mergeCheck.reason;
     } else if (!cfg.git.autoMerge) {

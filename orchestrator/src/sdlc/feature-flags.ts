@@ -31,6 +31,14 @@ export type SdlcFeatureFlags = {
   autoDeployLocal: boolean;
   /** Copy uncommitted files from main checkout into the SDLC worktree (so local edits get committed on the feature branch). */
   syncUncommittedFromMain: boolean;
+  /** Before worktree: if checkout is clean and on `git.baseBranch`, `git fetch` + `merge --ff-only origin/<baseBranch>`. */
+  autoPullMainBeforeRun: boolean;
+  /** After a PR is opened: same fast-forward on main (optional; keeps local base current). */
+  autoPullMainAfterPr: boolean;
+  /** After a successful merge (local policy): same fast-forward so local `main` includes the merge commit. */
+  autoPullMainAfterMerge: boolean;
+  /** When OPENAI_API_KEY is set and Hero skills were selected, use the model to draft the conventional commit (skill-aware); else template. */
+  autoCommitMessageFromSkills: boolean;
 };
 
 const defaultFlags: SdlcFeatureFlags = {
@@ -46,6 +54,10 @@ const defaultFlags: SdlcFeatureFlags = {
   autoMerge: true,
   autoDeployLocal: false,
   syncUncommittedFromMain: true,
+  autoPullMainBeforeRun: true,
+  autoPullMainAfterPr: true,
+  autoPullMainAfterMerge: true,
+  autoCommitMessageFromSkills: true,
 };
 
 function deepClone<T>(x: T): T {
