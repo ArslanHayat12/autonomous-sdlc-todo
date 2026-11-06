@@ -39,6 +39,22 @@ export type SdlcFeatureFlags = {
   autoPullMainAfterMerge: boolean;
   /** When OPENAI_API_KEY is set and Hero skills were selected, use the model to draft the conventional commit (skill-aware); else template. */
   autoCommitMessageFromSkills: boolean;
+  /**
+   * One-switch **no-human-on-merge** path: forces `autoCommit`, `autoPush`, `autoPr`, `autoMerge` and `requireHumanApprovalBeforeMerge: false`.
+   */
+  fullAgentAutomation: boolean;
+  /**
+   * When `true`, do **not** run `gh pr merge` — merge on GitHub manually.
+   * When `false` (default with `fullAgentAutomation`), CLI attempts merge after the PR.
+   */
+  requireHumanApprovalBeforeMerge: boolean;
+  /**
+   * Before creating the worktree, run a **verification** command on the **main repo checkout** (e.g. `npm run build`).
+   * Set `false` to skip — you can rely on CI or `qualityGates` in the worktree instead.
+   */
+  runMainRepoVerificationBeforeSdlc: boolean;
+  /** Shell command for pre-SDLC verification (default `npm run build`). Override with env `SDLC_VERIFY_COMMAND`. */
+  mainRepoVerificationCommand: string;
 };
 
 const defaultFlags: SdlcFeatureFlags = {
@@ -58,6 +74,10 @@ const defaultFlags: SdlcFeatureFlags = {
   autoPullMainAfterPr: true,
   autoPullMainAfterMerge: true,
   autoCommitMessageFromSkills: true,
+  fullAgentAutomation: false,
+  requireHumanApprovalBeforeMerge: false,
+  runMainRepoVerificationBeforeSdlc: false,
+  mainRepoVerificationCommand: 'npm run build',
 };
 
 function deepClone<T>(x: T): T {
@@ -85,22 +105,33 @@ export type SdlcConfigWithFeatures = SdlcConfig & { features: SdlcFeatureFlags }
 
 export function applyFeatureFlagsToConfig(base: SdlcConfig, f: SdlcFeatureFlags): SdlcConfigWithFeatures {
   const c = deepClone(base) as SdlcConfigWithFeatures;
-  c.features = { ...f };
-  c.git.worktreesEnabled = f.isolatedWorktree;
-  c.git.pruneStaleWorktreesOnStart = f.pruneStaleWorktreesOnStart;
-  c.git.autoStage = f.autoCommit;
-  c.git.autoCommit = f.autoCommit;
-  c.git.autoPush = f.autoPush;
-  c.git.autoCreatePr = f.autoPr;
-  c.git.autoMerge = f.autoMerge;
+  let flags = { ...f };
+  if (flags.fullAgentAutomation) {
+    flags = {
+      ...flags,
+      autoCommit: true,
+      autoPush: true,
+      autoPr: true,
+      autoMerge: true,
+      requireHumanApprovalBeforeMerge: false,
+    };
+  }
+  c.features = flags;
+  c.git.worktreesEnabled = flags.isolatedWorktree;
+  c.git.pruneStaleWorktreesOnStart = flags.pruneStaleWorktreesOnStart;
+  c.git.autoStage = flags.autoCommit;
+  c.git.autoCommit = flags.autoCommit;
+  c.git.autoPush = flags.autoPush;
+  c.git.autoCreatePr = flags.autoPr;
+  c.git.autoMerge = flags.autoMerge;
 
-  if (!f.aiHeroSkills) {
+  if (!flags.aiHeroSkills) {
     c.aiHero.discoveryEnabled = false;
     c.aiHero.selectionEnabled = false;
     c.aiHero.executionEnabled = false;
     c.aiHero.validationEnabled = false;
   }
-  if (!f.qualityGates) {
+  if (!flags.qualityGates) {
     for (const k of Object.keys(c.qualityGates) as (keyof typeof c.qualityGates)[]) {
       c.qualityGates[k] = { ...c.qualityGates[k], enabled: false, mandatory: false };
     }

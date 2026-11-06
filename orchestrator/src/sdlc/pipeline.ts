@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -121,6 +121,40 @@ function tryFastForwardMainCheckout(cfg: SdlcConfigWithFeatures, when: PullMainW
   step('git pull (main checkout)', `Fast-forwarded ${base} to origin/${base} (${detail}).`);
 }
 
+/**
+ * Optional **human-free** gate: verify the main checkout (e.g. `npm run build`) before branching to SDLC worktree.
+ * Skip with `SDLC_SKIP_MAIN_VERIFY=1` or `runMainRepoVerificationBeforeSdlc: false`.
+ */
+function runMainRepoVerificationIfEnabled(cfg: SdlcConfigWithFeatures): void {
+  if (process.env.SDLC_SKIP_MAIN_VERIFY === '1' || !cfg.features.runMainRepoVerificationBeforeSdlc) {
+    return;
+  }
+  const cmd = (process.env.SDLC_VERIFY_COMMAND ?? cfg.features.mainRepoVerificationCommand).trim();
+  if (!cmd) {
+    step('verify (main checkout)', 'Skipped (empty command).');
+    return;
+  }
+  step('verify (main checkout)', `Running: ${cmd}`);
+  const shell = process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : '/bin/sh';
+  try {
+    execSync(cmd, {
+      cwd: mainRepoRoot,
+      stdio: 'pipe',
+      encoding: 'utf8',
+      env: process.env,
+      shell,
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    step('verify (main checkout)', 'Passed.');
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    const tail = [err.stdout, err.stderr].filter(Boolean).join('\n').slice(-4000);
+    throw new Error(
+      `Main checkout verification failed (runMainRepoVerificationBeforeSdlc). Command: ${cmd}\n${tail || err.message || String(e)}`,
+    );
+  }
+}
+
 export async function runSdlcFromArgv(argv: string[]): Promise<void> {
   const configMgr = new ConfigurationManager();
   const cfg = await configMgr.get(mainRepoRoot);
@@ -213,6 +247,8 @@ async function runFullPipeline(
   step('worktree prune', 'Stale sdlc worktrees removed when enabled in sdlc.config.ts (frees disk).');
 
   tryFastForwardMainCheckout(cfg, 'beforeRun', 'before worktree');
+
+  runMainRepoVerificationIfEnabled(cfg);
 
   const baseSha = gitWt.resolveBaseSha(mainRepoRoot);
   step('git base', `Using base ${baseSha} (config baseBranch=${branchMgr.baseBranch})`);
@@ -555,6 +591,7 @@ async function runFullPipeline(
 
     const canMerge =
       cfg.git.autoMerge &&
+      !cfg.features.requireHumanApprovalBeforeMerge &&
       mergeCheck.ok &&
       cfg.git.autoPush &&
       prNumber !== null &&
@@ -569,10 +606,15 @@ async function runFullPipeline(
       if (mr.ok) {
         tryFastForwardMainCheckout(cfg, 'afterMerge', 'after merge on remote — update local main');
       }
+    } else if (cfg.features.requireHumanApprovalBeforeMerge && mergeCheck.ok && prNumber !== null && owner && repo) {
+      mergeStatus =
+        'Merge skipped: requireHumanApprovalBeforeMerge is true — merge on GitHub manually (agent finished PR).';
     } else if (!mergeCheck.ok) {
       mergeStatus = mergeCheck.reason;
     } else if (!cfg.git.autoMerge) {
       mergeStatus = 'Merge skipped: autoMerge is false (sdlc.features.json or sdlc.config.ts).';
+    } else if (cfg.features.requireHumanApprovalBeforeMerge) {
+      mergeStatus = 'Merge skipped: requireHumanApprovalBeforeMerge is true.';
     } else if (!cfg.git.autoPush) {
       mergeStatus = 'Merge skipped: autoPush is false — merge requires a pushed branch.';
     } else if (prNumber === null) {

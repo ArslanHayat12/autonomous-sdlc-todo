@@ -1,4 +1,8 @@
 {
+  "fullAgentAutomation": true,
+  "requireHumanApprovalBeforeMerge": false,
+  "runMainRepoVerificationBeforeSdlc": true,
+  "mainRepoVerificationCommand": "npm run build",
   "isolatedWorktree": true,
   "pruneStaleWorktreesOnStart": true,
   "autoImplement": true,
