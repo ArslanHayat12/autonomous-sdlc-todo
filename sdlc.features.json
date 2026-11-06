@@ -18,5 +18,7 @@
   "autoPullMainBeforeRun": true,
   "autoPullMainAfterPr": true,
   "autoPullMainAfterMerge": true,
-  "autoCommitMessageFromSkills": true
+  "autoCommitMessageFromSkills": true,
+  "resetMainCheckoutAfterMerge": true,
+  "agentEditAutoPublish": false
 }

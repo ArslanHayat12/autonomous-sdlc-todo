@@ -11,6 +11,7 @@
     "test:e2e": "playwright test",
     "sdlc": "npm --workspace orchestrator run sdlc",
     "sdlc:auto": "node scripts/sdlc-auto.mjs",
+    "sdlc:publish": "node scripts/sdlc-publish-auto.mjs",
     "security": "npm audit --audit-level=high",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down"

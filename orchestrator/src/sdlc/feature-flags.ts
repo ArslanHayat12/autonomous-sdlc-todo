@@ -55,6 +55,16 @@ export type SdlcFeatureFlags = {
   runMainRepoVerificationBeforeSdlc: boolean;
   /** Shell command for pre-SDLC verification (default `npm run build`). Override with env `SDLC_VERIFY_COMMAND`. */
   mainRepoVerificationCommand: string;
+  /**
+   * After a **successful** `gh pr merge` (full SDLC or `--publish`), hard-reset local **`git.baseBranch`** to **`origin/<baseBranch>`**
+   * so stray uncommitted files are discarded. Requires a **clean** tree when switching branches — skipped if dirty.
+   */
+  resetMainCheckoutAfterMerge: boolean;
+  /**
+   * Intended for **Cursor agent workflow** (optional `.cursor/hooks` + env): when you edit in the repo without running full SDLC,
+   * see README “Agent edit → auto merge”. The hook is opt-in via **`SDLC_CURSOR_PUBLISH_ON_STOP=1`** in `.env`.
+   */
+  agentEditAutoPublish: boolean;
 };
 
 const defaultFlags: SdlcFeatureFlags = {
@@ -78,6 +88,8 @@ const defaultFlags: SdlcFeatureFlags = {
   requireHumanApprovalBeforeMerge: false,
   runMainRepoVerificationBeforeSdlc: false,
   mainRepoVerificationCommand: 'npm run build',
+  resetMainCheckoutAfterMerge: false,
+  agentEditAutoPublish: false,
 };
 
 function deepClone<T>(x: T): T {

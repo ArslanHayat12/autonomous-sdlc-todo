@@ -42,7 +42,25 @@ npm run sdlc:auto
 
 That runs `npm run sdlc` with **no argv**; the orchestrator uses **`process.env.SDLC_INSTRUCTION`** as the default instruction (CLI args still win if you pass them).
 
+Similarly, **`npm run sdlc:publish`** runs **`npm run sdlc -- --publish`** with no argv (instruction still from **`SDLC_INSTRUCTION`**).
+
 On **GitHub Actions**, use workflow [`.github/workflows/sdlc.yml`](.github/workflows/sdlc.yml): set repo secrets **`OPENAI_API_KEY`**, optionally **`SDLC_INSTRUCTION`**, and **`GH_TOKEN`** (or rely on the default `GITHUB_TOKEN`). Trigger **workflow_dispatch** or edit the `schedule` cron — no one types `npm run sdlc` on their laptop.
+
+### Cursor agent: edit in the editor, then PR + merge (no full SDLC)
+
+The orchestrator cannot see Cursor’s chat or tool edits until they are **saved as files in the repo**. For **PR + auto-merge from those files** (no OpenAI plan/implementation pass):
+
+1. Set **`"isolatedWorktree": false`** in **`sdlc.features.json`** (publish uses your **main checkout**; `true` is for isolated SDLC worktrees).
+2. Put the short description in **`SDLC_INSTRUCTION`** (`.env` or export).
+3. Let the agent change files, then run:
+
+   ```bash
+   npm run sdlc -- --publish
+   ```
+
+   Or hands-off: **`npm run sdlc:publish`**.
+
+Optional: **`.cursor/hooks.json`** runs **`.cursor/hooks/sdlc-publish-on-stop.sh`** on **`stop`**. Enable with **`SDLC_CURSOR_PUBLISH_ON_STOP=1`** in `.env` and **`"agentEditAutoPublish": true`** in **`sdlc.features.json`** — after each agent completion it runs **`npm run sdlc:publish`** (can be slow; requires `gh` auth).
 
 ### CLI flags
 
@@ -54,6 +72,7 @@ On **GitHub Actions**, use workflow [`.github/workflows/sdlc.yml`](.github/workf
 | `--resume` | Stub — shows state only (full resume not implemented) |
 | `--deploy-only` | `docker compose` up + health curls |
 | `--review-only` | Not implemented — use full run |
+| `--publish` | Commit **existing** working-tree changes, push, open PR, merge (no SDLC AI); requires **`isolatedWorktree: false`** |
 
 Environment overrides:
 
@@ -72,6 +91,8 @@ Environment overrides:
 | `SDLC_KEEP_WORKTREE` | `1` keeps `.sdlc-worktrees/…` after run |
 | `SDLC_SKIP_AUTO_PULL` | `1` skips all automatic `git fetch` + fast-forward merges on your base-branch checkout (see `autoPullMain*` in `sdlc.features.json`) |
 | `SDLC_SKIP_SYNC_BEFORE_MERGE` | `1` skips **rebase onto `origin/<base>`** + **`git push --force-with-lease`** before `gh pr merge` (default: sync so GitHub can merge when `main` moved during the run) |
+| `SDLC_SKIP_RESET_MAIN_AFTER_MERGE` | `1` skips **`git reset --hard origin/<base>`** after a successful merge when **`resetMainCheckoutAfterMerge`** is true |
+| `SDLC_CURSOR_PUBLISH_ON_STOP` | `1` allows the Cursor **`stop`** hook to run **`npm run sdlc:publish`** (also set **`agentEditAutoPublish`** in `sdlc.features.json`) |
 
 ## What `npm run sdlc` does
 
@@ -88,8 +109,9 @@ Environment overrides:
 11. **AI review** loop (up to `maxAiReviewIterations`) with optional auto-fix commits + push.  
 12. **Sync branch for merge**: **`git fetch`**, **`git rebase origin/<baseBranch>`** on the feature branch, **`git push --force-with-lease`** (unless **`SDLC_SKIP_SYNC_BEFORE_MERGE=1`**) so GitHub does not report “not mergeable” when the default branch advanced mid-run.  
 13. **`gh pr merge --squash`** when policies pass — **never** `--admin`; branch protection / required reviews still apply; then optional **pull** so local `main` matches remote (`autoPullMainAfterMerge`).  
-14. Optional **local Docker deploy** if merge succeeded and **`autoDeployLocal`** is true in `sdlc.features.json` **or** `SDLC_DEPLOY_LOCAL=1`.  
-15. Writes a Markdown report under `artifacts/sdlc-reports/` and `.sdlc/workflow-state.json`.
+14. Optional **hard reset** of local **`main`** to **`origin/main`** when **`resetMainCheckoutAfterMerge`** is true (clears leftover uncommitted noise — skipped if the tree is dirty or **`SDLC_SKIP_RESET_MAIN_AFTER_MERGE=1`**).  
+15. Optional **local Docker deploy** if merge succeeded and **`autoDeployLocal`** is true in `sdlc.features.json` **or** `SDLC_DEPLOY_LOCAL=1`.  
+16. Writes a Markdown report under `artifacts/sdlc-reports/` and `.sdlc/workflow-state.json`.
 
 ## Run the app locally
 
@@ -124,12 +146,14 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 | `requireHumanApprovalBeforeMerge` | `false` | `true`: **skip** `gh pr merge` (human merges on GitHub). `false`: run merge when `autoMerge` and policy allow. |
 | `runMainRepoVerificationBeforeSdlc` | `false` | `true`: run **`mainRepoVerificationCommand`** on the **main checkout** after pull, **before** the worktree (built-in “tested baseline” gate). |
 | `mainRepoVerificationCommand` | `npm run build` | Shell command for that verification; override with env **`SDLC_VERIFY_COMMAND`**. |
+| `resetMainCheckoutAfterMerge` | `false` | `true`: after a successful merge (full SDLC or `--publish`), **`git reset --hard origin/<baseBranch>`** on a **clean** checkout of `baseBranch` (clears stray uncommitted files). |
+| `agentEditAutoPublish` | `false` | `true`: Cursor **`stop`** hook may run **`npm run sdlc:publish`** when **`SDLC_CURSOR_PUBLISH_ON_STOP=1`** (see README “Cursor agent”). |
 | `isolatedWorktree` | `true` | `true`: linked worktree under `.sdlc-worktrees/`. `false`: new branch in the main clone (requires clean tree). |
 | `pruneStaleWorktreesOnStart` | `true` | Remove old `sdlc__agent-*` worktrees before each run (when worktrees are enabled). |
 | `autoImplement` | `true` | OpenAI (or fallback) code edits. `false`: plan + gates only, no patch application. |
 | `aiHeroSkills` | `true` | Discover `skills/*/SKILL.md`, route into plan/review prompts. `false`: skip skill discovery. |
 | `aiReview` | `true` | Post-PR AI review loop. `false`: skip review and auto-fix iterations. |
-| `qualityGates` | `true` | Run gates from `sdlc.config.ts`. `false`: all gates disabled (merge policy reflects skipped/failed gates). |
+| `qualityGates` | `true` | Run gates from `sdlc.config.ts`. `false`: gates skipped (**`--publish`** uses this too; mandatory **skipped** does not block auto-merge). |
 | `autoCommit` | `true` | Commit changes in the session. |
 | `autoPush` | `true` | Push the feature branch (`false` also disables PR creation; `gh pr create` needs a pushed branch). |
 | `autoPr` | `true` | `gh pr create` when commit + push ran. |

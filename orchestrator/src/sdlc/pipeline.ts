@@ -162,6 +162,45 @@ function tryFastForwardMainCheckout(cfg: SdlcConfigWithFeatures, when: PullMainW
 }
 
 /**
+ * After a successful merge: **hard reset** local `baseBranch` to `origin/<baseBranch>` so uncommitted noise is cleared.
+ * Requires currently on `baseBranch` and a **clean** working tree (otherwise skipped — unsafe).
+ */
+function resetMainCheckoutToOriginAfterMerge(cfg: SdlcConfigWithFeatures): void {
+  if (process.env.SDLC_SKIP_RESET_MAIN_AFTER_MERGE === '1' || !cfg.features.resetMainCheckoutAfterMerge) {
+    return;
+  }
+  const base = cfg.git.baseBranch;
+  const cur = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim();
+  if (cur.startsWith('__GIT_FAIL__')) {
+    step('git reset (main after merge)', 'Skipped: could not read current branch.');
+    return;
+  }
+  if (cur !== base) {
+    step('git reset (main after merge)', `Skipped: on ${cur}, not ${base} — switch manually if you want a clean ${base}.`);
+    return;
+  }
+  const dirty = execGit(mainRepoRoot, ['status', '--porcelain'], true).trim();
+  if (dirty && !dirty.startsWith('__GIT_FAIL__')) {
+    step(
+      'git reset (main after merge)',
+      `Skipped: ${base} has uncommitted changes (would lose work). Commit/stash or set SDLC_SKIP_RESET_MAIN_AFTER_MERGE=1.`,
+    );
+    return;
+  }
+  const fetchOut = execGit(mainRepoRoot, ['fetch', 'origin'], true);
+  if (fetchOut.startsWith('__GIT_FAIL__')) {
+    step('git reset (main after merge)', `fetch failed: ${fetchOut.slice(0, 320)}`);
+    return;
+  }
+  const hard = execGit(mainRepoRoot, ['reset', '--hard', `origin/${base}`], true);
+  if (hard.startsWith('__GIT_FAIL__')) {
+    step('git reset (main after merge)', `reset failed: ${hard.slice(0, 400)}`);
+    return;
+  }
+  step('git reset (main after merge)', `Hard-reset ${base} to origin/${base} (cleared local drift).`);
+}
+
+/**
  * Optional **human-free** gate: verify the main checkout (e.g. `npm run build`) before branching to SDLC worktree.
  * Skip with `SDLC_SKIP_MAIN_VERIFY=1` or `runMainRepoVerificationBeforeSdlc: false`.
  */
@@ -242,7 +281,248 @@ export async function runSdlcFromArgv(argv: string[]): Promise<void> {
     return;
   }
 
+  if (parsed.mode === 'publish') {
+    await runPublishOnlyPipeline(parsed, cfg, stateMgr);
+    return;
+  }
+
   await runFullPipeline(parsed, cfg, stateMgr);
+}
+
+/**
+ * **Publish** working-tree edits (e.g. from Cursor agent): commit on a new branch, push, PR, merge.
+ * Does **not** run SDLC plan/AI implementation. Requires **`isolatedWorktree: false`** (uses main checkout).
+ */
+async function runPublishOnlyPipeline(
+  parsed: ParsedArgv,
+  cfg: SdlcConfigWithFeatures,
+  stateMgr: WorkflowStateManager,
+): Promise<void> {
+  const instruction = parsed.instruction;
+  const mergeMgr = new MergeManager(cfg);
+  const prMgr = new PullRequestManager(cfg);
+  const reportGen = new ReportGenerator();
+  const commitGen = new CommitMessageGenerator();
+  const gateOrch = new QualityGateOrchestrator(cfg.qualityGates);
+  const testRunner = new TestRunner();
+
+  const state: WorkflowState = {
+    version: 1,
+    startedAt: new Date().toISOString(),
+    instruction,
+    phase: 'plan',
+  };
+  await stateMgr.save(cfg.workflow.stateFile, state);
+
+  step('mode', 'publish — commit local changes, push, PR, merge (no SDLC AI implementation)');
+  const origBranch = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim() || '(detached)';
+
+  if (cfg.git.worktreesEnabled) {
+    console.error(
+      'publish mode requires isolatedWorktree: false in sdlc.features.json (main-checkout branch). Or run full npm run sdlc.',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  tryFastForwardMainCheckout(cfg, 'beforeRun', 'before publish');
+  runMainRepoVerificationIfEnabled(cfg);
+
+  const dirty = execGit(mainRepoRoot, ['status', '--porcelain'], true).trim();
+  if (!dirty || dirty.startsWith('__GIT_FAIL__')) {
+    step('publish', 'Nothing to commit — working tree clean. Make edits first, then re-run with --publish.');
+    process.exitCode = 1;
+    return;
+  }
+
+  const baseSha = execGit(mainRepoRoot, ['rev-parse', 'HEAD'], true).trim();
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const featureBranch = `${cfg.git.featureBranchPrefix}publish-${stamp}`;
+
+  execGit(mainRepoRoot, ['checkout', '-b', featureBranch]);
+  const session: WorktreeSession = { path: mainRepoRoot, branch: featureBranch, mainRepoRoot, baseSha };
+  state.featureBranch = featureBranch;
+  state.baseSha = baseSha;
+  state.phase = 'implement';
+  await stateMgr.save(cfg.workflow.stateFile, state);
+
+  let mergeSucceeded = false;
+  const title = commitGen.generateTitle('agent', instruction);
+  const body = commitGen.generateBody({
+    why: instruction,
+    what: 'Published from local working tree (`--publish`); no SDLC plan/AI implementation.',
+    components: [],
+    architecture: 'Feature branch created from current HEAD in main checkout.',
+    security: '',
+    tests: cfg.features.qualityGates ? 'Quality gates from sdlc.config.ts (when enabled).' : 'Gates skipped (sdlc.features.json qualityGates: false).',
+    breaking: 'None intended.',
+  });
+
+  let prUrl: string | null = null;
+  let prNumber: number | null = null;
+  let mergeStatus = 'not attempted';
+  const gateResults: GateResult[] = [];
+
+  try {
+    let committed = false;
+    if (!cfg.git.autoCommit) {
+      step('git commit', 'Skipped (autoCommit false).');
+    } else {
+      committed = await gitCommitAll(session, title, body);
+    }
+    if (!committed) {
+      step('publish', 'No commit created — aborting.');
+      process.exitCode = 1;
+      return;
+    }
+
+    state.phase = 'validate';
+    await stateMgr.save(cfg.workflow.stateFile, state);
+
+    if (cfg.features.qualityGates) {
+      gateResults.push(
+        await gateOrch.runGate('build', session.path, async p =>
+          Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], p.timeoutMs)),
+        ),
+      );
+      gateResults.push(
+        await gateOrch.runGate('dependencyAudit', session.path, async p =>
+          Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'security'], p.timeoutMs)),
+        ),
+      );
+      if (cfg.qualityGates.e2e.enabled && process.env.SDLC_SKIP_PLAYWRIGHT !== '1') {
+        runInWorktree(session, 'npx', ['playwright', 'install', 'chromium']);
+      }
+      gateResults.push(
+        await gateOrch.runGate('e2e', session.path, async () => {
+          if (!cfg.qualityGates.e2e.enabled) {
+            return { ok: false, output: 'e2e disabled in sdlc.config.ts (not executed).' };
+          }
+          if (process.env.SDLC_SKIP_PLAYWRIGHT === '1') {
+            return { ok: false, output: 'Skipped via SDLC_SKIP_PLAYWRIGHT=1 (not counted as passed).' };
+          }
+          return testRunner.runInWorktree(session.path, 'npx', ['playwright', 'test'], cfg.qualityGates.e2e.timeoutMs);
+        }),
+      );
+    } else {
+      step('quality gates', 'Skipped (sdlc.features.json qualityGates: false).');
+    }
+
+    const { files: changedFiles } = commitGen.describeDiff(session.path);
+    const commitSha = execGit(session.path, ['rev-parse', 'HEAD']).trim();
+    state.commitSha = commitSha;
+
+    state.phase = 'pr';
+    await stateMgr.save(cfg.workflow.stateFile, state);
+
+    if (!cfg.git.autoPush || !cfg.git.autoCommit) {
+      step('github', 'PR skipped: need autoCommit and autoPush.');
+    } else {
+      const prBody = [
+        `## Instruction`,
+        instruction,
+        ``,
+        `## Mode`,
+        `**publish** — committed local working tree; no SDLC AI implementation.`,
+        ``,
+        `## Files`,
+        changedFiles.map(f => `- \`${f}\``).join('\n') || '(see diff)',
+      ].join('\n');
+      const pr = await prMgr.createOrUpdate(session, instruction, prBody);
+      prUrl = pr.prUrl;
+      prNumber = pr.prNumber;
+      step('github', pr.message);
+      tryFastForwardMainCheckout(cfg, 'afterPr', 'after PR opened');
+    }
+
+    state.phase = 'merge';
+    await stateMgr.save(cfg.workflow.stateFile, state);
+
+    const mergeCheck = mergeMgr.canAutoMerge(gateResults, false);
+    const remote = resolveRemoteUrl(session);
+    const repoIds = remote ? parseGitHubRepoFromUrl(remote) : null;
+    const owner = process.env.GITHUB_OWNER ?? repoIds?.owner;
+    const repo = process.env.GITHUB_REPO ?? repoIds?.repo;
+
+    const canMerge =
+      cfg.git.autoMerge &&
+      !cfg.features.requireHumanApprovalBeforeMerge &&
+      mergeCheck.ok &&
+      cfg.git.autoPush &&
+      prNumber !== null &&
+      owner &&
+      repo;
+
+    if (canMerge) {
+      let syncOk = true;
+      try {
+        syncFeatureBranchWithRemoteBase(session, cfg.git.baseBranch);
+      } catch (e) {
+        syncOk = false;
+        mergeStatus = `Pre-merge sync failed: ${e instanceof Error ? e.message : String(e)}`;
+      }
+      if (syncOk) {
+        const mr = await mergeMgr.mergePr(session, owner!, repo!, prNumber!);
+        mergeStatus = mr.ok ? 'merged (requested via gh; may be queued pending CI / branch protection)' : mr.message;
+        mergeSucceeded = mr.ok;
+        if (mr.ok) {
+          tryFastForwardMainCheckout(cfg, 'afterMerge', 'after merge on remote — update local main');
+          resetMainCheckoutToOriginAfterMerge(cfg);
+          execGit(mainRepoRoot, ['checkout', cfg.git.baseBranch], true);
+          execGit(mainRepoRoot, ['branch', '-D', featureBranch], true);
+          step('git cleanup', `Checked out ${cfg.git.baseBranch} and deleted local ${featureBranch}.`);
+        }
+      }
+    } else if (!mergeCheck.ok) {
+      mergeStatus = mergeCheck.reason;
+    } else if (!cfg.git.autoMerge) {
+      mergeStatus = 'Merge skipped: autoMerge is false.';
+    } else if (prNumber === null) {
+      mergeStatus = 'Merge skipped: no PR.';
+    } else {
+      mergeStatus = 'Merge skipped (policy).';
+    }
+
+    state.phase = 'done';
+    await stateMgr.save(cfg.workflow.stateFile, state);
+
+    const report: ExecutionReport = {
+      originalBranch: origBranch,
+      featureBranch,
+      baseSha,
+      selectedSkills: [],
+      skillInvocations: [],
+      implementationSummary: 'publish mode — existing working tree only',
+      filesChanged: changedFiles,
+      commitSha,
+      commitMessage: `${title}\n\n${body}`,
+      prUrl,
+      reviewFindings: '',
+      gateResults,
+      mergeStatus,
+      deploymentStatus: 'Skipped (--publish).',
+      healthResults: [],
+    };
+    const reportPath = await reportGen.writeMarkdown(mainRepoRoot, cfg.workflow.reportDir, report);
+    step('report', reportPath);
+    console.log(`\nFinished (publish).\n  Report: ${reportPath}\n  PR: ${prUrl ?? 'n/a'}\n  Merge: ${mergeStatus}\n`);
+  } catch (e) {
+    state.phase = 'failed';
+    await stateMgr.save(cfg.workflow.stateFile, state);
+    throw e;
+  } finally {
+    if (!mergeSucceeded) {
+      const cur = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim();
+      if (cur === featureBranch) {
+        if (origBranch && origBranch !== '(detached)' && !origBranch.startsWith('__GIT_FAIL__')) {
+          execGit(mainRepoRoot, ['checkout', origBranch], true);
+          step('git cleanup', `Restored branch ${origBranch}.`);
+        }
+        execGit(mainRepoRoot, ['branch', '-D', featureBranch], true);
+        step('git cleanup', `Deleted local branch ${featureBranch}.`);
+      }
+    }
+  }
 }
 
 async function runFullPipeline(
@@ -655,6 +935,7 @@ async function runFullPipeline(
         state.mergeSucceeded = mr.ok;
         if (mr.ok) {
           tryFastForwardMainCheckout(cfg, 'afterMerge', 'after merge on remote — update local main');
+          resetMainCheckoutToOriginAfterMerge(cfg);
         }
       }
     } else if (cfg.features.requireHumanApprovalBeforeMerge && mergeCheck.ok && prNumber !== null && owner && repo) {
