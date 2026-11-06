@@ -124,6 +124,41 @@ export type WorkflowConfig = {
   dryRun: boolean;
 };
 
+/** Continuous worker (polls GitHub issues + local queue). */
+export type WorkerConfig = {
+  enabled: boolean;
+  pollingIntervalMs: number;
+  /** Process at most this many tasks before exiting (0 = unlimited until SIGTERM). */
+  maxConsecutiveTasks: number;
+  /** Parallel task executions (1 recommended — each run holds git state). */
+  concurrency: number;
+  /** Optional separate git checkout for the worker (set **`SDLC_REPO_ROOT`**); keeps Cursor’s dirty tree untouched. */
+  dedicatedRepoPath: string;
+  /** When `dedicatedRepoPath` is set, mirror `syncPathsFromMain` + uncommitted files from **`SDLC_PRIMARY_REPO_ROOT`**. */
+  syncFromPrimaryWorkspace: boolean;
+  workerStateFile: string;
+  shutdownFile: string;
+  pidFile: string;
+};
+
+export type TaskSourcesConfig = {
+  githubIssues: boolean;
+  /** `gh issue list` label filter (comma-separated passed to `--label`) */
+  githubIssueLabels: string;
+  /** Max issues to fetch per poll */
+  githubIssueLimit: number;
+  localQueue: boolean;
+  /** Relative to monorepo root */
+  localQueueFile: string;
+};
+
+export type SafetyConfig = {
+  maxTaskRetries: number;
+  neverBypassBranchProtection: true;
+  /** `git clean` is never run by this project */
+  forbidGitClean: true;
+};
+
 export type SdlcConfig = {
   ai: AiConfig;
   aiHero: AiHeroConfig;
@@ -132,6 +167,9 @@ export type SdlcConfig = {
   github: GitHubConfig;
   docker: DockerConfig;
   workflow: WorkflowConfig;
+  worker: WorkerConfig;
+  taskSources: TaskSourcesConfig;
+  safety: SafetyConfig;
   /** Paths to mirror from main checkout into worktree (tests / config) */
   syncPathsFromMain: readonly string[];
 };
@@ -233,6 +271,29 @@ export const sdlcConfig: SdlcConfig = {
     stateFile: '.sdlc/workflow-state.json',
     reportDir: 'artifacts/sdlc-reports',
     dryRun: false,
+  },
+  worker: {
+    enabled: true,
+    pollingIntervalMs: 30_000,
+    maxConsecutiveTasks: 0,
+    concurrency: 1,
+    dedicatedRepoPath: '',
+    syncFromPrimaryWorkspace: true,
+    workerStateFile: '.sdlc/worker-state.json',
+    shutdownFile: '.sdlc/WORKER_SHUTDOWN',
+    pidFile: '.sdlc/worker.pid',
+  },
+  taskSources: {
+    githubIssues: true,
+    githubIssueLabels: 'sdlc',
+    githubIssueLimit: 20,
+    localQueue: true,
+    localQueueFile: 'tasks/queue.json',
+  },
+  safety: {
+    maxTaskRetries: 2,
+    neverBypassBranchProtection: true,
+    forbidGitClean: true,
   },
   syncPathsFromMain: ['tests/todo.spec.ts', 'playwright.config.ts'],
 };

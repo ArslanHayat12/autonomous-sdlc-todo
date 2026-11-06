@@ -8,13 +8,31 @@ A React + TypeScript Todo app, Express API, Docker Compose, Playwright E2E, and 
 |------|------|
 | `apps/web` | Vite + React UI |
 | `apps/api` | Express JSON API |
-| `orchestrator/` | Autonomous SDLC CLI — worktree isolation, OpenAI, `gh` PR/merge, optional Docker |
+| `orchestrator/` | Autonomous SDLC CLI — worktree isolation, OpenAI, `gh` PR/merge, optional Docker, **continuous worker** |
 | `orchestrator/sdlc.config.ts` | **Single policy file** for AI, quality gates, Git, GitHub, Docker, workflow limits |
 | `sdlc.features.json` | **Feature toggles** (optional JSON at repo root) — turn off worktrees, PR, merge, deploy, Hero skills, etc. without editing TypeScript |
 | `skills/` | Local **AI Hero–style** `SKILL.md` files (install more via `SDLC_INSTALL_AIHERO_SKILLS=1` → `npx skills@latest add mattpocock/skills`) |
 | `docker-compose.yml` | Local API + dev web for Docker workflow |
 
 The orchestrator runs in **Node**, not inside Cursor: it **injects** `SKILL.md` content into OpenAI prompts. It does **not** invoke Cursor’s in-IDE skill runtime. Optional `npx skills@latest add` pulls the official catalog when you opt in.
+
+### Continuous worker (`npm run sdlc:worker`)
+
+Polls **GitHub issues** (label from `taskSources.githubIssueLabels` in `orchestrator/sdlc.config.ts`) and the **local queue** [`tasks/queue.json`](tasks/queue.json), then runs the same full SDLC pipeline as `npm run sdlc` for each task.
+
+| Command | Purpose |
+|---------|---------|
+| `npm run sdlc:worker` | Start worker (blocks; SIGINT/SIGTERM graceful stop) |
+| `npm run sdlc:status` | Print worker state (`.sdlc/worker-state.json`) |
+| `npm run sdlc:stop` | Create `.sdlc/WORKER_SHUTDOWN` so the worker exits cleanly |
+
+**Dirty main checkout:** Either run the worker from a **second clone** and set **`SDLC_REPO_ROOT`** to that path, **or** set **`SDLC_WORKER_SYNC_FROM_PRIMARY=1`** and **`SDLC_PRIMARY_REPO_ROOT=/path/to/cursor/workspace`** so uncommitted files copy into each task worktree (never touches your dirty tree with reset/clean).
+
+**GitHub tasks:** open issues with the configured label (default **`sdlc`**) are picked up, then **commented + closed** only when the run **`outcome.ok`** (merged and deploy OK if enabled). If merge is blocked by branch protection, the issue is **skipped** for the rest of the run (tracked in worker state); resolve on GitHub and clear **`.sdlc/worker-state.json`** or restart with a fresh state.
+
+**Local tasks:** append to **`tasks/queue.json`** (`version: 1`, `tasks[]` with `status: "pending"` and `instruction`) — no worker restart required.
+
+**Honest limits:** “Invoke skills through Cursor” is **not** implemented; skills are **read from `skills/*/SKILL.md`** and injected into OpenAI prompts. Full **resume** of an interrupted pipeline is still partial (`--resume` stub). Splitting `pipeline.ts` into the full module list you named is a further refactor.
 
 ## Requirements
 

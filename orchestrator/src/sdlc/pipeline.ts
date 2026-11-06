@@ -2,7 +2,6 @@ import { execFileSync, execSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 import { formatSkillsForPrompt, type HeroSkill } from '../hero-skills.js';
 import { execGit } from '../git-exec.js';
 import { applyPatches } from '../patch.js';
@@ -33,9 +32,17 @@ import type { ExecutionReport, GateResult, SkillInvocation, WorkflowState } from
 import { parseGitHubRepoFromUrl, resolveRemoteUrl } from '../gh-pr.js';
 import type { ReviewResult } from '../review-json.js';
 import type { SdlcConfigWithFeatures } from './feature-flags.js';
+import { resolveMonorepoRoot, resolvePrimarySyncSourceRoot } from './repo-root.js';
 
-/** Monorepo root (pipeline lives in orchestrator/src/sdlc/) */
-const mainRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+/** Set at each CLI/worker entry (honors `SDLC_REPO_ROOT`, `SDLC_PRIMARY_REPO_ROOT`). */
+let activeRepoRoot = resolveMonorepoRoot();
+/** Checkout to mirror uncommitted/sync paths from (often primary Cursor workspace when worker uses a clean clone). */
+let activeSyncSourceRoot = resolvePrimarySyncSourceRoot();
+
+export function setPipelineRepoRoots(repoRoot: string, syncSourceRoot?: string): void {
+  activeRepoRoot = path.resolve(repoRoot);
+  activeSyncSourceRoot = syncSourceRoot ? path.resolve(syncSourceRoot) : activeRepoRoot;
+}
 
 const logLines: string[] = [];
 
@@ -131,7 +138,7 @@ function tryFastForwardMainCheckout(cfg: SdlcConfigWithFeatures, when: PullMainW
   if (!allow) return;
 
   const base = cfg.git.baseBranch;
-  const cur = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim();
+  const cur = execGit(activeRepoRoot, ['branch', '--show-current'], true).trim();
   if (cur.startsWith('__GIT_FAIL__')) {
     step('git pull (main checkout)', `Skipped (${detail}): could not read current branch.`);
     return;
@@ -140,17 +147,17 @@ function tryFastForwardMainCheckout(cfg: SdlcConfigWithFeatures, when: PullMainW
     step('git pull (main checkout)', `Skipped (${detail}): on ${cur}, not ${base}.`);
     return;
   }
-  const dirty = execGit(mainRepoRoot, ['status', '--porcelain'], true).trim();
+  const dirty = execGit(activeRepoRoot, ['status', '--porcelain'], true).trim();
   if (dirty && !dirty.startsWith('__GIT_FAIL__')) {
     step('git pull (main checkout)', `Skipped (${detail}): ${base} has uncommitted changes.`);
     return;
   }
-  const fetchOut = execGit(mainRepoRoot, ['fetch', 'origin'], true);
+  const fetchOut = execGit(activeRepoRoot, ['fetch', 'origin'], true);
   if (fetchOut.startsWith('__GIT_FAIL__')) {
     step('git pull (main checkout)', `fetch failed (${detail}): ${fetchOut.slice(0, 280)}`);
     return;
   }
-  const mergeOut = execGit(mainRepoRoot, ['merge', '--ff-only', `origin/${base}`], true);
+  const mergeOut = execGit(activeRepoRoot, ['merge', '--ff-only', `origin/${base}`], true);
   if (mergeOut.startsWith('__GIT_FAIL__')) {
     step(
       'git pull (main checkout)',
@@ -170,7 +177,7 @@ function resetMainCheckoutToOriginAfterMerge(cfg: SdlcConfigWithFeatures): void 
     return;
   }
   const base = cfg.git.baseBranch;
-  const cur = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim();
+  const cur = execGit(activeRepoRoot, ['branch', '--show-current'], true).trim();
   if (cur.startsWith('__GIT_FAIL__')) {
     step('git reset (main after merge)', 'Skipped: could not read current branch.');
     return;
@@ -179,7 +186,7 @@ function resetMainCheckoutToOriginAfterMerge(cfg: SdlcConfigWithFeatures): void 
     step('git reset (main after merge)', `Skipped: on ${cur}, not ${base} — switch manually if you want a clean ${base}.`);
     return;
   }
-  const dirty = execGit(mainRepoRoot, ['status', '--porcelain'], true).trim();
+  const dirty = execGit(activeRepoRoot, ['status', '--porcelain'], true).trim();
   if (dirty && !dirty.startsWith('__GIT_FAIL__')) {
     step(
       'git reset (main after merge)',
@@ -187,12 +194,12 @@ function resetMainCheckoutToOriginAfterMerge(cfg: SdlcConfigWithFeatures): void 
     );
     return;
   }
-  const fetchOut = execGit(mainRepoRoot, ['fetch', 'origin'], true);
+  const fetchOut = execGit(activeRepoRoot, ['fetch', 'origin'], true);
   if (fetchOut.startsWith('__GIT_FAIL__')) {
     step('git reset (main after merge)', `fetch failed: ${fetchOut.slice(0, 320)}`);
     return;
   }
-  const hard = execGit(mainRepoRoot, ['reset', '--hard', `origin/${base}`], true);
+  const hard = execGit(activeRepoRoot, ['reset', '--hard', `origin/${base}`], true);
   if (hard.startsWith('__GIT_FAIL__')) {
     step('git reset (main after merge)', `reset failed: ${hard.slice(0, 400)}`);
     return;
@@ -217,7 +224,7 @@ function runMainRepoVerificationIfEnabled(cfg: SdlcConfigWithFeatures): void {
   const shell = process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : '/bin/sh';
   try {
     execSync(cmd, {
-      cwd: mainRepoRoot,
+      cwd: activeRepoRoot,
       stdio: 'pipe',
       encoding: 'utf8',
       env: process.env,
@@ -235,10 +242,11 @@ function runMainRepoVerificationIfEnabled(cfg: SdlcConfigWithFeatures): void {
 }
 
 export async function runSdlcFromArgv(argv: string[]): Promise<void> {
+  setPipelineRepoRoots(resolveMonorepoRoot(), resolvePrimarySyncSourceRoot());
   const configMgr = new ConfigurationManager();
-  const cfg = await configMgr.get(mainRepoRoot);
+  const cfg = await configMgr.get(activeRepoRoot);
   const parsed = parseArgv(argv);
-  const stateMgr = new WorkflowStateManager(mainRepoRoot);
+  const stateMgr = new WorkflowStateManager(activeRepoRoot);
 
   if (parsed.mode === 'dryRun') {
     console.log(JSON.stringify(cfg, null, 2));
@@ -273,8 +281,8 @@ export async function runSdlcFromArgv(argv: string[]): Promise<void> {
   if (parsed.mode === 'deployOnly') {
     const dm = new DockerManager(cfg.docker);
     const dep = new DeploymentManager(cfg, dm);
-    const short = execGit(mainRepoRoot, ['rev-parse', '--short', 'HEAD']).trim();
-    const r = dep.deployLocal(mainRepoRoot, short);
+    const short = execGit(activeRepoRoot, ['rev-parse', '--short', 'HEAD']).trim();
+    const r = dep.deployLocal(activeRepoRoot, short);
     step('deploy-only', r.output.slice(-3000));
     const health = dm.healthChecks();
     console.log(JSON.stringify({ health }, null, 2));
@@ -315,7 +323,7 @@ async function runPublishOnlyPipeline(
   await stateMgr.save(cfg.workflow.stateFile, state);
 
   step('mode', 'publish — commit local changes, push, PR, merge (no SDLC AI implementation)');
-  const origBranch = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim() || '(detached)';
+  const origBranch = execGit(activeRepoRoot, ['branch', '--show-current'], true).trim() || '(detached)';
 
   if (cfg.git.worktreesEnabled) {
     console.error(
@@ -328,19 +336,19 @@ async function runPublishOnlyPipeline(
   tryFastForwardMainCheckout(cfg, 'beforeRun', 'before publish');
   runMainRepoVerificationIfEnabled(cfg);
 
-  const dirty = execGit(mainRepoRoot, ['status', '--porcelain'], true).trim();
+  const dirty = execGit(activeRepoRoot, ['status', '--porcelain'], true).trim();
   if (!dirty || dirty.startsWith('__GIT_FAIL__')) {
     step('publish', 'Nothing to commit — working tree clean. Make edits first, then re-run with --publish.');
     process.exitCode = 1;
     return;
   }
 
-  const baseSha = execGit(mainRepoRoot, ['rev-parse', 'HEAD'], true).trim();
+  const baseSha = execGit(activeRepoRoot, ['rev-parse', 'HEAD'], true).trim();
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const featureBranch = `${cfg.git.featureBranchPrefix}publish-${stamp}`;
 
-  execGit(mainRepoRoot, ['checkout', '-b', featureBranch]);
-  const session: WorktreeSession = { path: mainRepoRoot, branch: featureBranch, mainRepoRoot, baseSha };
+  execGit(activeRepoRoot, ['checkout', '-b', featureBranch]);
+  const session: WorktreeSession = { path: activeRepoRoot, branch: featureBranch, mainRepoRoot: activeRepoRoot, baseSha };
   state.featureBranch = featureBranch;
   state.baseSha = baseSha;
   state.phase = 'implement';
@@ -468,8 +476,8 @@ async function runPublishOnlyPipeline(
         if (mr.ok) {
           tryFastForwardMainCheckout(cfg, 'afterMerge', 'after merge on remote — update local main');
           resetMainCheckoutToOriginAfterMerge(cfg);
-          execGit(mainRepoRoot, ['checkout', cfg.git.baseBranch], true);
-          execGit(mainRepoRoot, ['branch', '-D', featureBranch], true);
+          execGit(activeRepoRoot, ['checkout', cfg.git.baseBranch], true);
+          execGit(activeRepoRoot, ['branch', '-D', featureBranch], true);
           step('git cleanup', `Checked out ${cfg.git.baseBranch} and deleted local ${featureBranch}.`);
         }
       }
@@ -503,7 +511,7 @@ async function runPublishOnlyPipeline(
       deploymentStatus: 'Skipped (--publish).',
       healthResults: [],
     };
-    const reportPath = await reportGen.writeMarkdown(mainRepoRoot, cfg.workflow.reportDir, report);
+    const reportPath = await reportGen.writeMarkdown(activeRepoRoot, cfg.workflow.reportDir, report);
     step('report', reportPath);
     console.log(`\nFinished (publish).\n  Report: ${reportPath}\n  PR: ${prUrl ?? 'n/a'}\n  Merge: ${mergeStatus}\n`);
   } catch (e) {
@@ -512,24 +520,32 @@ async function runPublishOnlyPipeline(
     throw e;
   } finally {
     if (!mergeSucceeded) {
-      const cur = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim();
+      const cur = execGit(activeRepoRoot, ['branch', '--show-current'], true).trim();
       if (cur === featureBranch) {
         if (origBranch && origBranch !== '(detached)' && !origBranch.startsWith('__GIT_FAIL__')) {
-          execGit(mainRepoRoot, ['checkout', origBranch], true);
+          execGit(activeRepoRoot, ['checkout', origBranch], true);
           step('git cleanup', `Restored branch ${origBranch}.`);
         }
-        execGit(mainRepoRoot, ['branch', '-D', featureBranch], true);
+        execGit(activeRepoRoot, ['branch', '-D', featureBranch], true);
         step('git cleanup', `Deleted local branch ${featureBranch}.`);
       }
     }
   }
 }
 
+export type SdlcTaskOutcome = {
+  ok: boolean;
+  mergeSucceeded: boolean;
+  prUrl: string | null;
+  mergeStatus: string;
+  blockedReason?: string;
+};
+
 async function runFullPipeline(
   parsed: ParsedArgv,
   cfg: SdlcConfigWithFeatures,
   stateMgr: WorkflowStateManager,
-): Promise<void> {
+): Promise<SdlcTaskOutcome> {
   const instruction = parsed.instruction;
   const gitWt = new GitWorktreeManager(cfg);
   const branchMgr = new BranchManager(cfg);
@@ -555,26 +571,26 @@ async function runFullPipeline(
   await stateMgr.save(cfg.workflow.stateFile, state);
 
   step('instruction', instruction);
-  const origBranch = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim() || '(detached)';
+  const origBranch = execGit(activeRepoRoot, ['branch', '--show-current'], true).trim() || '(detached)';
   step(
     'git isolation',
     cfg.git.worktreesEnabled
-      ? `Main checkout preserved; linked worktrees under ${path.join(mainRepoRoot, cfg.git.worktreesDirectory)}.`
+      ? `Main checkout preserved; linked worktrees under ${path.join(activeRepoRoot, cfg.git.worktreesDirectory)}.`
       : `In-place branch mode (sdlc.features.json isolatedWorktree: false); will restore ${origBranch} after run.`,
   );
 
-  await pruneStaleSdlcWorktrees(mainRepoRoot, cfg);
+  await pruneStaleSdlcWorktrees(activeRepoRoot, cfg);
   step('worktree prune', 'Stale sdlc worktrees removed when enabled in sdlc.config.ts (frees disk).');
 
   tryFastForwardMainCheckout(cfg, 'beforeRun', 'before worktree');
 
   runMainRepoVerificationIfEnabled(cfg);
 
-  const baseSha = gitWt.resolveBaseSha(mainRepoRoot);
+  const baseSha = gitWt.resolveBaseSha(activeRepoRoot);
   step('git base', `Using base ${baseSha} (config baseBranch=${branchMgr.baseBranch})`);
   state.baseSha = baseSha;
 
-  const session = await gitWt.create(mainRepoRoot, baseSha);
+  const session = await gitWt.create(activeRepoRoot, baseSha);
   state.featureBranch = session.branch;
   await stateMgr.save(cfg.workflow.stateFile, state);
 
@@ -591,14 +607,25 @@ async function runFullPipeline(
   let rollbackStatus: string | undefined;
   let lastReview: ReviewResult = { findings: [], needsMoreChanges: false };
 
+  let outcome: SdlcTaskOutcome = {
+    ok: false,
+    mergeSucceeded: false,
+    prUrl: null,
+    mergeStatus: 'not attempted',
+  };
+
   try {
     step('worktree', `${session.path} branch ${session.branch}`);
 
-    if (session.path !== mainRepoRoot) {
-      const synced = await syncWorkingTreeFilesIntoWorktree(mainRepoRoot, session.path, [...cfg.syncPathsFromMain]);
+    if (session.path !== activeRepoRoot) {
+      const syncFrom = activeSyncSourceRoot === activeRepoRoot ? activeRepoRoot : activeSyncSourceRoot;
+      if (syncFrom !== activeRepoRoot) {
+        step('sync source', `Using SDLC_WORKER_SYNC_FROM_PRIMARY: mirroring from ${syncFrom}`);
+      }
+      const synced = await syncWorkingTreeFilesIntoWorktree(syncFrom, session.path, [...cfg.syncPathsFromMain]);
       if (synced.length) step('sync from main checkout', synced.join(', '));
       if (cfg.features.syncUncommittedFromMain) {
-        const u = await syncUncommittedFromMain(mainRepoRoot, session.path);
+        const u = await syncUncommittedFromMain(syncFrom, session.path);
         const parts: string[] = [];
         if (u.copied.length) parts.push(`copied ${u.copied.length} (${u.copied.slice(0, 8).join(', ')}${u.copied.length > 8 ? '…' : ''})`);
         if (u.deleted.length) parts.push(`removed ${u.deleted.length} in worktree`);
@@ -726,13 +753,13 @@ async function runFullPipeline(
     );
 
     gateResults.push(
-      await gateOrch.runGate('dockerBuild', mainRepoRoot, async () => {
+      await gateOrch.runGate('dockerBuild', activeRepoRoot, async () => {
         if (!cfg.qualityGates.dockerBuild.enabled) {
           return { ok: false, output: 'docker build gate disabled (not executed).' };
         }
         const short = execGit(session.path, ['rev-parse', '--short', 'HEAD']).trim();
         dockerTag = cfg.docker.imageTagTemplate.replace('{{shortSha}}', short);
-        return dockerMgr.build(mainRepoRoot, dockerTag);
+        return dockerMgr.build(activeRepoRoot, dockerTag);
       }),
     );
 
@@ -964,14 +991,16 @@ async function runFullPipeline(
 
     const deployLocalEnv = process.env.SDLC_DEPLOY_LOCAL === '1';
     const wantDeploy = cfg.features.autoDeployLocal || deployLocalEnv;
+    let deployAttempted = false;
     if (cfg.docker.enabled && state.mergeSucceeded && wantDeploy) {
-      const short = execGit(mainRepoRoot, ['rev-parse', '--short', 'HEAD']).trim();
-      const dep = deployMgr.deployLocal(mainRepoRoot, short);
+      const short = execGit(activeRepoRoot, ['rev-parse', '--short', 'HEAD']).trim();
+      const dep = deployMgr.deployLocal(activeRepoRoot, short);
       deployStatus = dep.ok ? 'docker compose up -d --build' : dep.output.slice(-2000);
       healthResults.push(...dockerMgr.healthChecks());
       state.deployAttempted = true;
+      deployAttempted = true;
       if (healthResults.some(x => !x.ok) && cfg.docker.rollbackOnFailedHealth) {
-        rollbackStatus = rollbackMgr.down(mainRepoRoot);
+        rollbackStatus = rollbackMgr.down(activeRepoRoot);
       }
     } else {
       deployStatus =
@@ -1002,7 +1031,7 @@ async function runFullPipeline(
       healthResults,
       rollbackStatus,
     };
-    const reportPath = await reportGen.writeMarkdown(mainRepoRoot, cfg.workflow.reportDir, report);
+    const reportPath = await reportGen.writeMarkdown(activeRepoRoot, cfg.workflow.reportDir, report);
     step('report', reportPath);
 
     const worktreeNote = cfg.git.worktreesEnabled
@@ -1011,7 +1040,57 @@ async function runFullPipeline(
     console.log(
       `\nFinished.\n  Report: ${reportPath}${worktreeNote}\n  PR: ${prUrl ?? 'n/a'}\n  Merge: ${mergeStatus}\n`,
     );
+
+    const mandatoryFailed = gateResults.some(g => g.mandatory && g.status === 'failed');
+    const mergeOk = state.mergeSucceeded === true;
+    const deployOk =
+      !deployAttempted ||
+      (deployStatus === 'docker compose up -d --build' && !healthResults.some(x => !x.ok));
+
+    outcome = {
+      ok: !mandatoryFailed && mergeOk && deployOk,
+      mergeSucceeded: mergeOk,
+      prUrl,
+      mergeStatus,
+      blockedReason: mandatoryFailed
+        ? 'Mandatory quality gate failed'
+        : !mergeOk
+          ? mergeStatus
+          : deployAttempted && !deployOk
+            ? `Deploy/health: ${deployStatus.slice(0, 400)}`
+            : undefined,
+    };
   } finally {
     await gitWt.remove(session, origBranch);
+  }
+  return outcome;
+}
+
+/**
+ * Run the **full** SDLC pipeline for a single instruction (worker / programmatic).
+ * Optional **`repoRoot`** / **`syncSourceRoot`** override the active git checkout and uncommitted sync source.
+ */
+export async function runSdlcTask(
+  instruction: string,
+  repoRoot?: string,
+  syncSourceRoot?: string,
+): Promise<SdlcTaskOutcome> {
+  if (repoRoot) setPipelineRepoRoots(repoRoot, syncSourceRoot);
+  else setPipelineRepoRoots(resolveMonorepoRoot(), resolvePrimarySyncSourceRoot());
+  const configMgr = new ConfigurationManager();
+  const cfg = await configMgr.get(activeRepoRoot);
+  const stateMgr = new WorkflowStateManager(activeRepoRoot);
+  const parsed: ParsedArgv = { mode: 'full', instruction };
+  try {
+    return await runFullPipeline(parsed, cfg, stateMgr);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      mergeSucceeded: false,
+      prUrl: null,
+      mergeStatus: 'pipeline error',
+      blockedReason: msg.slice(0, 2000),
+    };
   }
 }
