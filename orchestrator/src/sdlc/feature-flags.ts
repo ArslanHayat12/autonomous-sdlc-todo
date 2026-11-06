@@ -39,6 +39,11 @@ export type SdlcFeatureFlags = {
   autoPullMainAfterMerge: boolean;
   /** When OPENAI_API_KEY is set and Hero skills were selected, use the model to draft the conventional commit (skill-aware); else template. */
   autoCommitMessageFromSkills: boolean;
+  /**
+   * When `true`, do **not** run `gh pr merge` after the agent opens a PR — merge on GitHub manually (reviews, branch protection).
+   * When `false`, attempt automatic merge after the agent finishes (same as `autoMerge` and GitHub policy still applies).
+   */
+  requireHumanApprovalBeforeMerge: boolean;
 };
 
 const defaultFlags: SdlcFeatureFlags = {
@@ -58,6 +63,7 @@ const defaultFlags: SdlcFeatureFlags = {
   autoPullMainAfterPr: true,
   autoPullMainAfterMerge: true,
   autoCommitMessageFromSkills: true,
+  requireHumanApprovalBeforeMerge: false,
 };
 
 function deepClone<T>(x: T): T {

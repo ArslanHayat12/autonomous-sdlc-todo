@@ -9,6 +9,7 @@
   "autoPush": true,
   "autoPr": true,
   "autoMerge": true,
+  "requireHumanApprovalBeforeMerge": false,
   "autoDeployLocal": false,
   "syncUncommittedFromMain": true,
   "autoPullMainBeforeRun": true,
