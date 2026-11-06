@@ -188,11 +188,26 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 | `autoPullMainAfterMerge` | `true` | After **`gh pr merge` succeeds**: fast-forward **local** `main` so it includes the merge. |
 | `autoCommitMessageFromSkills` | `true` | If `OPENAI_API_KEY` is set and **Hero skills** were selected, use the model to draft the conventional commit (aligned with `SKILL.md` context); otherwise use the template. |
 
+## Fully automated merge (no human in the loop)
+
+**`gh pr merge` cannot bypass GitHub.** Zero humans only works if **repository rules** allow the **account or token** running `gh` to merge without a person clicking Approve.
+
+Configure the repo (or organization) so that for the **default branch**:
+
+1. **Required reviews** — either **0** required approving reviews, or use a **bot** account that is allowed as CODEOWNERS/approver and have automation approve (this repo does **not** implement auto-approve; GitHub’s own rules must permit merge).
+2. **Status checks** — either no required checks, or **all** checks that run on the PR can turn **green** from automation (e.g. GitHub Actions with `GITHUB_TOKEN` / deploy keys).
+3. **Allow merge** — squash/merge/rebase must match **`mergeStrategy`** in `orchestrator/sdlc.config.ts` and what the branch allows.
+4. **`gh` identity** — `gh auth login` as a user/bot whose role is **maintain/write** and who is not blocked by “review required from specific teams only” unless that identity is in those teams.
+
+With **`mergeUseGhAuto`**: if checks are still running, the CLI queues **`gh pr merge … --auto`** and polls until the PR **MERGED** or **`SDLC_MERGE_WAIT_MS`** is hit. If policy **never** allows merge (e.g. human-only approval forever), the run stays **blocked** — correct behavior.
+
+This orchestrator **never** uses **`--admin`** merge (no bypass of branch protection).
+
 ## Honest limits
 
 - **SAST / ESLint** gates are present in config but not wired to dedicated tools in this repo yet (disabled by default).  
 - **Full resume** (`--resume`) and **`--review-only`** are placeholders.  
-- **Merge** depends on GitHub: if checks or approvals are required, `gh pr merge` will fail with a clear message — this is intentional (no bypass).  
+- **Merge** depends on GitHub: if checks or human-only approvals are required and not satisfied, `gh pr merge` waits, fails, or stays queued — **by design** (no bypass).  
 - **True AI Hero / Cursor skill execution** in-process is not available here; skills are **loaded from disk** and **verified** via `SKILL.md` presence, then used as **prompt context**.
 
 ## Security
