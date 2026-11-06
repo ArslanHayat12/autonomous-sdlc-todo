@@ -9,5 +9,6 @@
   "autoPush": true,
   "autoPr": true,
   "autoMerge": true,
-  "autoDeployLocal": false
+  "autoDeployLocal": false,
+  "syncUncommittedFromMain": true
 }

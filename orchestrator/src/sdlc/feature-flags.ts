@@ -29,6 +29,8 @@ export type SdlcFeatureFlags = {
   autoMerge: boolean;
   /** After successful merge: docker compose up (local). */
   autoDeployLocal: boolean;
+  /** Copy uncommitted files from main checkout into the SDLC worktree (so local edits get committed on the feature branch). */
+  syncUncommittedFromMain: boolean;
 };
 
 const defaultFlags: SdlcFeatureFlags = {
@@ -43,6 +45,7 @@ const defaultFlags: SdlcFeatureFlags = {
   autoPr: true,
   autoMerge: true,
   autoDeployLocal: false,
+  syncUncommittedFromMain: true,
 };
 
 function deepClone<T>(x: T): T {
