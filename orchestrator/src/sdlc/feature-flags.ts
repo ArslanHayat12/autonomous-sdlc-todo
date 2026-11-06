@@ -39,6 +39,13 @@ export type SdlcFeatureFlags = {
   autoPullMainAfterMerge: boolean;
   /** When OPENAI_API_KEY is set and Hero skills were selected, use the model to draft the conventional commit (skill-aware); else template. */
   autoCommitMessageFromSkills: boolean;
+  /**
+   * After a successful remote merge + fast-forward on `git.baseBranch`: clear **local** uncommitted changes on that branch so Cursor Source Control is clean.
+   * - `none`: no action
+   * - `stash`: `git stash push -u -m "sdlc post-merge"` (recoverable)
+   * - `hard`: `git reset --hard` + `git clean -fd` (discards local uncommitted work on main)
+   */
+  clearMainCheckoutAfterMerge: 'none' | 'stash' | 'hard';
 };
 
 const defaultFlags: SdlcFeatureFlags = {
@@ -58,6 +65,7 @@ const defaultFlags: SdlcFeatureFlags = {
   autoPullMainAfterPr: true,
   autoPullMainAfterMerge: true,
   autoCommitMessageFromSkills: true,
+  clearMainCheckoutAfterMerge: 'stash',
 };
 
 function deepClone<T>(x: T): T {

@@ -121,6 +121,53 @@ function tryFastForwardMainCheckout(cfg: SdlcConfigWithFeatures, when: PullMainW
   step('git pull (main checkout)', `Fast-forwarded ${base} to origin/${base} (${detail}).`);
 }
 
+/**
+ * After merge: clear uncommitted changes on the **base branch** checkout so IDE Source Control matches remote (see `syncUncommittedFromMain`).
+ * Only runs when `isolatedWorktree` is true (main clone was only used as copy source). Skips if not on base branch or `SDLC_SKIP_CLEAR_MAIN_AFTER_MERGE=1`.
+ */
+function tryClearMainCheckoutAfterMerge(cfg: SdlcConfigWithFeatures): void {
+  const mode = cfg.features.clearMainCheckoutAfterMerge;
+  if (mode === 'none' || process.env.SDLC_SKIP_CLEAR_MAIN_AFTER_MERGE === '1') return;
+  if (!cfg.git.worktreesEnabled) {
+    step('main checkout cleanup', 'Skipped (in-place branch mode — not clearing main).');
+    return;
+  }
+  const base = cfg.git.baseBranch;
+  const cur = execGit(mainRepoRoot, ['branch', '--show-current'], true).trim();
+  if (cur.startsWith('__GIT_FAIL__') || cur !== base) {
+    step('main checkout cleanup', `Skipped (not on ${base}).`);
+    return;
+  }
+  const dirty = execGit(mainRepoRoot, ['status', '--porcelain'], true).trim();
+  if (!dirty || dirty.startsWith('__GIT_FAIL__')) {
+    step('main checkout cleanup', `Already clean on ${base}.`);
+    return;
+  }
+  if (mode === 'stash') {
+    const out = execGit(mainRepoRoot, ['stash', 'push', '-u', '-m', 'sdlc: post-merge clear main checkout'], true);
+    if (out.startsWith('__GIT_FAIL__')) {
+      step('main checkout cleanup', `stash failed: ${out.slice(0, 400)}`);
+    } else {
+      step('main checkout cleanup', `Stashed uncommitted changes on ${base} (git stash list to recover).`);
+    }
+    return;
+  }
+  if (mode === 'hard') {
+    const r1 = execGit(mainRepoRoot, ['reset', '--hard', 'HEAD'], true);
+    if (r1.startsWith('__GIT_FAIL__')) {
+      step('main checkout cleanup', `reset --hard failed: ${r1.slice(0, 400)}`);
+      return;
+    }
+    const r2 = execGit(mainRepoRoot, ['clean', '-fd'], true);
+    step(
+      'main checkout cleanup',
+      r2.startsWith('__GIT_FAIL__')
+        ? `reset OK; clean failed: ${r2.slice(0, 300)}`
+        : `Discarded uncommitted changes on ${base} (reset --hard + clean -fd).`,
+    );
+  }
+}
+
 export async function runSdlcFromArgv(argv: string[]): Promise<void> {
   const configMgr = new ConfigurationManager();
   const cfg = await configMgr.get(mainRepoRoot);
@@ -568,6 +615,7 @@ async function runFullPipeline(
       state.mergeSucceeded = mr.ok;
       if (mr.ok) {
         tryFastForwardMainCheckout(cfg, 'afterMerge', 'after merge on remote — update local main');
+        tryClearMainCheckoutAfterMerge(cfg);
       }
     } else if (!mergeCheck.ok) {
       mergeStatus = mergeCheck.reason;
