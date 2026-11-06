@@ -110,6 +110,8 @@ Environment overrides:
 | `SDLC_SKIP_AUTO_PULL` | `1` skips all automatic `git fetch` + fast-forward merges on your base-branch checkout (see `autoPullMain*` in `sdlc.features.json`) |
 | `SDLC_SKIP_SYNC_BEFORE_MERGE` | `1` skips **rebase onto `origin/<base>`** + **`git push --force-with-lease`** before `gh pr merge` (default: sync so GitHub can merge when `main` moved during the run) |
 | `SDLC_SKIP_RESET_MAIN_AFTER_MERGE` | `1` skips **`git reset --hard origin/<base>`** after a successful merge when **`resetMainCheckoutAfterMerge`** is true |
+| `SDLC_SKIP_ALIGN_MAIN_AFTER_RUN` | `1` skips **`git fetch` + `checkout -f <base>` + `reset --hard origin/<base>`** after each run when **`alignMainWithRemoteAfterRun`** is true |
+| `SDLC_CLEAN_UNTRACKED_AFTER_ALIGN` | `1` runs **`git clean -fd`** after align (deletes untracked files — use only if you accept data loss) |
 | `SDLC_CURSOR_PUBLISH_ON_STOP` | `1` allows the Cursor **`stop`** hook to run **`npm run sdlc:publish`** (also set **`agentEditAutoPublish`** in `sdlc.features.json`) |
 
 ## What `npm run sdlc` does
@@ -165,6 +167,7 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 | `runMainRepoVerificationBeforeSdlc` | `false` | `true`: run **`mainRepoVerificationCommand`** on the **main checkout** after pull, **before** the worktree (built-in “tested baseline” gate). |
 | `mainRepoVerificationCommand` | `npm run build` | Shell command for that verification; override with env **`SDLC_VERIFY_COMMAND`**. |
 | `resetMainCheckoutAfterMerge` | `false` | `true`: after a successful merge (full SDLC or `--publish`), **`git reset --hard origin/<baseBranch>`** on a **clean** checkout of `baseBranch` (clears stray uncommitted files). |
+| `alignMainWithRemoteAfterRun` | `false` | `true`: after **every** full SDLC / `--publish` run, force **`git checkout -f <base>`** + **`git reset --hard origin/<base>`** so local base matches GitHub (resolves dirty/conflict state). Optional untracked wipe: **`SDLC_CLEAN_UNTRACKED_AFTER_ALIGN=1`**. |
 | `agentEditAutoPublish` | `false` | `true`: Cursor **`stop`** hook may run **`npm run sdlc:publish`** when **`SDLC_CURSOR_PUBLISH_ON_STOP=1`** (see README “Cursor agent”). |
 | `isolatedWorktree` | `true` | `true`: linked worktree under `.sdlc-worktrees/`. `false`: new branch in the main clone (requires clean tree). |
 | `pruneStaleWorktreesOnStart` | `true` | Remove old `sdlc__agent-*` worktrees before each run (when worktrees are enabled). |

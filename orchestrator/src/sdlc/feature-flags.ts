@@ -65,6 +65,12 @@ export type SdlcFeatureFlags = {
    * see README “Agent edit → auto merge”. The hook is opt-in via **`SDLC_CURSOR_PUBLISH_ON_STOP=1`** in `.env`.
    */
   agentEditAutoPublish: boolean;
+  /**
+   * After **every** full SDLC run (success or failure), **`git fetch`**, **`checkout -f <baseBranch>`**, **`reset --hard origin/<baseBranch>`**
+   * so local main matches GitHub and conflicts/dirty trees are cleared. Set **`SDLC_SKIP_ALIGN_MAIN_AFTER_RUN=1`** to skip.
+   * Optional: **`SDLC_CLEAN_UNTRACKED_AFTER_ALIGN=1`** runs **`git clean -fd`** (removes untracked files — destructive).
+   */
+  alignMainWithRemoteAfterRun: boolean;
 };
 
 const defaultFlags: SdlcFeatureFlags = {
@@ -90,6 +96,7 @@ const defaultFlags: SdlcFeatureFlags = {
   mainRepoVerificationCommand: 'npm run build',
   resetMainCheckoutAfterMerge: false,
   agentEditAutoPublish: false,
+  alignMainWithRemoteAfterRun: false,
 };
 
 function deepClone<T>(x: T): T {
