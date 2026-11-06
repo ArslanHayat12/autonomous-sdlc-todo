@@ -208,6 +208,40 @@ function resetMainCheckoutToOriginAfterMerge(cfg: SdlcConfigWithFeatures): void 
 }
 
 /**
+ * Force local **`git.baseBranch`** to match **`origin/<base>`** (fetch + checkout -f + reset --hard).
+ * Runs after each run when **`alignMainWithRemoteAfterRun`** is true — clears conflicts / dirty state on that branch.
+ * Skip with **`SDLC_SKIP_ALIGN_MAIN_AFTER_RUN=1`**. Untracked cleanup only if **`SDLC_CLEAN_UNTRACKED_AFTER_ALIGN=1`**.
+ */
+function alignMainCheckoutWithRemote(cfg: SdlcConfigWithFeatures): void {
+  if (process.env.SDLC_SKIP_ALIGN_MAIN_AFTER_RUN === '1' || !cfg.features.alignMainWithRemoteAfterRun) {
+    return;
+  }
+  const base = cfg.git.baseBranch;
+  const fetchOut = execGit(activeRepoRoot, ['fetch', 'origin'], true);
+  if (fetchOut.startsWith('__GIT_FAIL__')) {
+    step('git align (base)', `fetch failed: ${fetchOut.slice(0, 320)}`);
+    return;
+  }
+  const co = execGit(activeRepoRoot, ['checkout', '-f', base], true);
+  if (co.startsWith('__GIT_FAIL__')) {
+    step('git align (base)', `checkout failed: ${co.slice(0, 400)}`);
+    return;
+  }
+  const hard = execGit(activeRepoRoot, ['reset', '--hard', `origin/${base}`], true);
+  if (hard.startsWith('__GIT_FAIL__')) {
+    step('git align (base)', `reset failed: ${hard.slice(0, 400)}`);
+    return;
+  }
+  step('git align (base)', `Aligned ${base} to origin/${base} (hard reset).`);
+  if (process.env.SDLC_CLEAN_UNTRACKED_AFTER_ALIGN === '1') {
+    const cl = execGit(activeRepoRoot, ['clean', '-fd'], true);
+    if (!cl.startsWith('__GIT_FAIL__')) {
+      step('git align (base)', 'Removed untracked files (git clean -fd).');
+    }
+  }
+}
+
+/**
  * Optional **human-free** gate: verify the main checkout (e.g. `npm run build`) before branching to SDLC worktree.
  * Skip with `SDLC_SKIP_MAIN_VERIFY=1` or `runMainRepoVerificationBeforeSdlc: false`.
  */
@@ -530,6 +564,7 @@ async function runPublishOnlyPipeline(
         step('git cleanup', `Deleted local branch ${featureBranch}.`);
       }
     }
+    alignMainCheckoutWithRemote(cfg);
   }
 }
 
@@ -1062,6 +1097,7 @@ async function runFullPipeline(
     };
   } finally {
     await gitWt.remove(session, origBranch);
+    alignMainCheckoutWithRemote(cfg);
   }
   return outcome;
 }
