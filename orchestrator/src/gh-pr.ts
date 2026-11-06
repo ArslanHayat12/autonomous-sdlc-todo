@@ -48,6 +48,30 @@ export function parseGitHubRepoFromUrl(url: string): { owner: string; repo: stri
   return null;
 }
 
+/** Default label colors (6-char hex, no #) for auto-created repo labels */
+const defaultLabelMeta: Record<string, { color: string; description: string }> = {
+  sdlc: { color: '1D76DB', description: 'Autonomous SDLC orchestrator run' },
+  automation: { color: '5319E7', description: 'Automation / bot-opened PR' },
+};
+
+/**
+ * Create missing labels on the repo so `gh pr create --label` does not fail.
+ * Uses `gh label create … --force` (creates or updates). Set SDLC_SKIP_LABEL_ENSURE=1 to skip.
+ */
+function ensureRepoLabels(cwd: string, owner: string, repo: string, labels: string[]): void {
+  if (process.env.SDLC_SKIP_LABEL_ENSURE === '1' || !labels.length) return;
+  const full = `${owner}/${repo}`;
+  for (const name of labels) {
+    const meta = defaultLabelMeta[name] ?? { color: '0E8A16', description: 'SDLC' };
+    execCmd(
+      cwd,
+      'gh',
+      ['label', 'create', name, '--repo', full, '--color', meta.color, '--description', meta.description, '--force'],
+      true,
+    );
+  }
+}
+
 export async function pushAndOpenPr(
   session: WorktreeSession,
   title: string,
@@ -88,7 +112,7 @@ export async function pushAndOpenPr(
     };
   }
 
-  let base = process.env.GITHUB_BASE_BRANCH?.trim();
+  let base: string = process.env.GITHUB_BASE_BRANCH?.trim() ?? '';
   if (!base) {
     const b = execCmd(
       session.path,
@@ -99,32 +123,45 @@ export async function pushAndOpenPr(
     base = b.startsWith('__CMD_FAIL__') || !b ? 'main' : b;
   }
 
+  function runPrCreate(labelArgs: string[]): string {
+    const bodyFile = writeBodyTemp(body);
+    try {
+      return execCmd(
+        session.path,
+        'gh',
+        [
+          'pr',
+          'create',
+          '--repo',
+          `${owner}/${repo}`,
+          '--base',
+          base,
+          '--head',
+          session.branch,
+          '--title',
+          title,
+          '--body-file',
+          bodyFile,
+          ...labelArgs,
+        ],
+        true,
+      );
+    } finally {
+      unlinkBodyTemp(bodyFile);
+    }
+  }
+
   const labelArgs = labels.flatMap(l => ['--label', l]);
-  const bodyFile = writeBodyTemp(body);
-  let create: string;
-  try {
-    create = execCmd(
-      session.path,
-      'gh',
-      [
-        'pr',
-        'create',
-        '--repo',
-        `${owner}/${repo}`,
-        '--base',
-        base,
-        '--head',
-        session.branch,
-        '--title',
-        title,
-        '--body-file',
-        bodyFile,
-        ...labelArgs,
-      ],
-      true,
-    );
-  } finally {
-    unlinkBodyTemp(bodyFile);
+  ensureRepoLabels(session.path, owner, repo, labels);
+  let create = runPrCreate(labelArgs);
+  let labelRetryNote = '';
+
+  /** gh fails the whole create if any --label does not exist on the repo; retry without labels. */
+  if (create.startsWith('__CMD_FAIL__') && labelArgs.length > 0 && /label/i.test(create)) {
+    create = runPrCreate([]);
+    if (!create.startsWith('__CMD_FAIL__')) {
+      labelRetryNote = `(note: PR opened without labels; create ${labels.map(l => `'${l}'`).join(' and ')} on GitHub or set github.autoLabel false in sdlc.config.ts)`;
+    }
   }
 
   if (create.startsWith('__CMD_FAIL__')) {
@@ -138,16 +175,30 @@ export async function pushAndOpenPr(
     return { prUrl: null, message: create, prNumber: null };
   }
 
-  const url = create.trim();
-  const num = parsePrNumber(
-    execCmd(session.path, 'gh', ['pr', 'view', '--repo', `${owner}/${repo}`, '--head', session.branch, '--json', 'number', '-q', '.number'], true).trim(),
-  );
-  return { prUrl: url.startsWith('http') ? url : null, message: url, prNumber: num };
+  const url = create.trim().split(/\r?\n/)[0] ?? create.trim();
+  let num = parsePrNumberFromPullUrl(url);
+  if (num === null && url.startsWith('http')) {
+    const byHead = execCmd(
+      session.path,
+      'gh',
+      ['pr', 'view', '--repo', `${owner}/${repo}`, '--head', session.branch, '--json', 'number', '-q', '.number'],
+      true,
+    ).trim();
+    num = parsePrNumber(byHead.startsWith('__CMD_FAIL__') ? '' : byHead);
+  }
+  const message = [url, labelRetryNote].filter(Boolean).join('\n');
+  return { prUrl: url.startsWith('http') ? url : null, message, prNumber: num };
 }
 
 function parsePrNumber(s: string): number | null {
   const n = Number.parseInt(s, 10);
   return Number.isFinite(n) ? n : null;
+}
+
+/** `gh pr create` prints a URL; `gh pr view --head` fails for branch names containing `/` (e.g. `feature/foo`). */
+function parsePrNumberFromPullUrl(url: string): number | null {
+  const m = url.trim().match(/\/(?:pull|pull-requests)\/(\d+)/);
+  return m ? parsePrNumber(m[1]) : null;
 }
 
 export async function updatePrDescription(session: WorktreeSession, body: string): Promise<string | null> {

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { formatSkillsForPrompt, type HeroSkill } from '../hero-skills.js';
 import { execGit } from '../git-exec.js';
 import { applyPatches } from '../patch.js';
-import { syncWorkingTreeFilesIntoWorktree } from '../sync-from-main.js';
+import { syncWorkingTreeFilesIntoWorktree, syncUncommittedFromMain } from '../sync-from-main.js';
 import type { WorktreeSession } from '../worktree.js';
 import { ConfigurationManager } from './config-manager.js';
 import { parseArgv, type ParsedArgv } from './argv.js';
@@ -190,6 +190,14 @@ async function runFullPipeline(
     if (session.path !== mainRepoRoot) {
       const synced = await syncWorkingTreeFilesIntoWorktree(mainRepoRoot, session.path, [...cfg.syncPathsFromMain]);
       if (synced.length) step('sync from main checkout', synced.join(', '));
+      if (cfg.features.syncUncommittedFromMain) {
+        const u = await syncUncommittedFromMain(mainRepoRoot, session.path);
+        const parts: string[] = [];
+        if (u.copied.length) parts.push(`copied ${u.copied.length} (${u.copied.slice(0, 8).join(', ')}${u.copied.length > 8 ? '…' : ''})`);
+        if (u.deleted.length) parts.push(`removed ${u.deleted.length} in worktree`);
+        if (u.skipped.length) parts.push(`skipped ${u.skipped.length}`);
+        step('sync uncommitted from main', parts.length ? parts.join('; ') : 'none');
+      }
     } else {
       step('sync from main checkout', 'Skipped (session path is main repo — already the same tree).');
     }
@@ -488,10 +496,20 @@ async function runFullPipeline(
       mergeStatus = mr.ok ? 'merged (requested via gh; may be queued pending CI / branch protection)' : mr.message;
       state.mergeAttempted = true;
       state.mergeSucceeded = mr.ok;
+    } else if (!mergeCheck.ok) {
+      mergeStatus = mergeCheck.reason;
+    } else if (!cfg.git.autoMerge) {
+      mergeStatus = 'Merge skipped: autoMerge is false (sdlc.features.json or sdlc.config.ts).';
+    } else if (!cfg.git.autoPush) {
+      mergeStatus = 'Merge skipped: autoPush is false — merge requires a pushed branch.';
+    } else if (prNumber === null) {
+      mergeStatus =
+        'Merge skipped: no PR number (PR was not created — see the github: line above; often gh pr create failed, or autoPr/commit/push was off).';
+    } else if (!owner || !repo) {
+      mergeStatus =
+        'Merge skipped: could not resolve GitHub owner/repo (check origin URL or set GITHUB_OWNER and GITHUB_REPO).';
     } else {
-      mergeStatus = mergeCheck.ok
-        ? 'Merge skipped (autoMerge off, missing pr number, or gh repo resolution).'
-        : mergeCheck.reason;
+      mergeStatus = 'Merge skipped (policy).';
     }
 
     state.phase = 'deploy';
