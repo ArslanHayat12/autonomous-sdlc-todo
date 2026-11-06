@@ -11,3 +11,8 @@ test-results
 coverage/
 .playwright/
 test-results/
+.sdlc-worktrees/
+.sdlc/
+artifacts/
+.orch-test-*/
+*.tsbuildinfo

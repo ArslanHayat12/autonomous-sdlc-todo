@@ -1,83 +1,106 @@
-# Autonomous SDLC Todo — local-first starter
+# Autonomous SDLC Todo — autonomous pipeline starter
 
-A small React + TypeScript Todo app with an Express API, Docker setup, Playwright E2E test, and a TypeScript SDLC runner. Designed to work locally with free/open-source tooling. OpenAI is optional for AI planning/review; GitHub and Figma MCP connections are optional Cursor integrations.
+A React + TypeScript Todo app, Express API, Docker Compose, Playwright E2E, and a **config-driven** SDLC orchestrator under `orchestrator/`.
+
+## Architecture (audit summary)
+
+| Area | Role |
+|------|------|
+| `apps/web` | Vite + React UI |
+| `apps/api` | Express JSON API |
+| `orchestrator/` | Autonomous SDLC CLI — worktree isolation, OpenAI, `gh` PR/merge, optional Docker |
+| `orchestrator/sdlc.config.ts` | **Single policy file** for AI, quality gates, Git, GitHub, Docker, workflow limits |
+| `skills/` | Local **AI Hero–style** `SKILL.md` files (install more via `SDLC_INSTALL_AIHERO_SKILLS=1` → `npx skills@latest add mattpocock/skills`) |
+| `docker-compose.yml` | Local API + dev web for Docker workflow |
+
+The orchestrator runs in **Node**, not inside Cursor: it **injects** `SKILL.md` content into OpenAI prompts. It does **not** invoke Cursor’s in-IDE skill runtime. Optional `npx skills@latest add` pulls the official catalog when you opt in.
 
 ## Requirements
-- Node.js 22+
-- npm 10+
-- Docker Desktop (optional, for containers)
-- Git
 
-## Run the Todo app
+- Node.js 22+, npm 10+, Git  
+- `gh` + `gh auth login` for PR / merge automation  
+- `OPENAI_API_KEY` for real AI implementation + review loops  
+- Docker Desktop for compose build / local deploy steps  
+
+## One-command SDLC
+
+```bash
+npm install
+cp .env.example .env
+# export OPENAI_API_KEY=...
+npm run sdlc -- "Add authentication to Todo"
+```
+
+### CLI flags
+
+| Flag | Behavior |
+|------|----------|
+| (default) | Full pipeline from `orchestrator/sdlc.config.ts` |
+| `--dry-run` | Print resolved JSON config to stdout |
+| `--status` | Print `.sdlc/workflow-state.json` |
+| `--resume` | Stub — shows state only (full resume not implemented) |
+| `--deploy-only` | `docker compose` up + health curls |
+| `--review-only` | Not implemented — use full run |
+
+Environment overrides:
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | AI provider |
+| `GITHUB_OWNER` / `GITHUB_REPO` | Override for `gh` when origin URL is unusual |
+| `GITHUB_BASE_BRANCH` | PR base (else `gh repo view … defaultBranchRef`) |
+| `SDLC_SKIP_PLAYWRIGHT` | `1` skips E2E (**mandatory e2e will fail merge** if enabled in config) |
+| `SDLC_DEPLOY_LOCAL` | `1` runs `docker compose up -d --build` after **successful** `gh pr merge` |
+| `SDLC_INSTALL_AIHERO_SKILLS` | `1` runs `npx skills@latest add mattpocock/skills` when `skills/` is empty |
+| `SDLC_KEEP_WORKTREE` | `1` keeps `.sdlc-worktrees/…` after run |
+
+## What `npm run sdlc` does
+
+1. Reads **`orchestrator/sdlc.config.ts`** (compiled to `dist/sdlc.config.js` at build time).  
+2. Creates a **linked Git worktree** under `.sdlc-worktrees/`; **your main checkout is not modified**.  
+3. Syncs paths from `syncPathsFromMain` (e.g. Playwright tests) into the worktree.  
+4. **Plans** (OpenAI) using selected `skills/*/SKILL.md` content.  
+5. **Implements** via OpenAI JSON patches (or a tiny fallback when no key).  
+6. Runs **quality gates** from config (build, audit, e2e, optional DAST curl, optional `docker compose build`). **Skipped** gates are logged as **skipped**, not **passed**.  
+7. **Commits** with a Conventional-Commit **title + body** describing why/what/tests/security.  
+8. **Pushes** + **`gh pr create`** (labels from config).  
+9. **AI review** loop (up to `maxAiReviewIterations`) with optional auto-fix commits + push.  
+10. **`gh pr merge --squash`** when policies pass — **never** `--admin`; branch protection / required reviews still apply.  
+11. Optional **local Docker deploy** if `SDLC_DEPLOY_LOCAL=1` and merge succeeded.  
+12. Writes a Markdown report under `artifacts/sdlc-reports/` and `.sdlc/workflow-state.json`.
+
+## Run the app locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-- UI: http://localhost:5173
-- API health: http://localhost:4000/health
+- UI: http://localhost:5173  
+- API: http://localhost:4000/health  
 
-## Run in Docker
-
-```bash
-docker compose up --build
-```
-
-Open http://localhost:5173. Stop with `docker compose down`.
-
-## Run tests and security checks
+## Tests
 
 ```bash
-npx playwright install chromium
+npm run test:orchestrator
 npm run test:e2e
 npm run security
 npm run build
 ```
 
-`npm audit` needs internet access to query the npm advisory database. Playwright downloads Chromium once; this is free.
+## Configuration
 
-## Run the SDLC starter
+Edit **`orchestrator/sdlc.config.ts`** for AI limits, which gates are mandatory, PR labels, merge strategy, Docker health URLs, etc. **Do not put secrets in this file** — use `.env` / environment variables only.
 
-```bash
-cp .env.example .env
-# Add OPENAI_API_KEY if you want AI planning and independent review
-npm run sdlc -- "Add a priority field to Todo items with tests"
-```
+## Honest limits
 
-The runner checks that the working tree is clean, creates a local `agent/<timestamp>` branch, writes an AI plan/review when a key is present, runs build/audit/Playwright, and saves evidence under `artifacts/`. It does not silently edit arbitrary source files, push code, open a PR, or deploy. This is an intentionally safe scaffold: autonomous code-writing, iterative repair, PR creation, and deploy adapters are extension points, not falsely claimed as already implemented.
+- **SAST / ESLint** gates are present in config but not wired to dedicated tools in this repo yet (disabled by default).  
+- **Full resume** (`--resume`) and **`--review-only`** are placeholders.  
+- **Merge** depends on GitHub: if checks or approvals are required, `gh pr merge` will fail with a clear message — this is intentional (no bypass).  
+- **True AI Hero / Cursor skill execution** in-process is not available here; skills are **loaded from disk** and **verified** via `SKILL.md` presence, then used as **prompt context**.
 
-## Optional MCP integrations in Cursor
+## Security
 
-The `.cursor/mcp.json` file declares:
-- GitHub MCP server via Docker (requires a GitHub token and Docker image pull).
-- Figma hosted MCP server (authenticate through Cursor when prompted).
-- Playwright MCP server for browser automation.
-
-Set environment variables in your local shell before starting Cursor. Do not commit tokens or put them in source files. If your Cursor version expects a different MCP config location/schema, move/adapt `.cursor/mcp.json` using its MCP settings UI. These MCP servers are available to Cursor; the starter orchestrator does not yet invoke MCP tools itself.
-
-GitHub publishing can later be enabled with `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`, and `GITHUB_BASE_BRANCH`. Until a publishing adapter is implemented, the runner prepares local evidence only.
-
-## Intended pipeline and current implementation status
-
-| Stage | Starter status |
-|---|---|
-| Instruction intake | Implemented (CLI argument) |
-| Repository analysis | Basic git + manifest inspection |
-| Skill selection | AI planning prompt + skill catalog |
-| Implementation | Human-applied; safe extension point |
-| Independent AI review | Implemented for run evidence (not a code-diff review yet) |
-| Build / dependency scan | Implemented |
-| Playwright tests | Implemented |
-| Automatic repair loop | Not implemented yet |
-| Local branch / report commit | Implemented |
-| GitHub PR | MCP config supplied; orchestrator PR adapter not implemented |
-| Docker build | Docker Compose supplied; manual command |
-| Human-approved deployment | Approval flag documented; no deploy adapter supplied |
-
-## Security notes
-- Keep `.env` out of Git.
-- Use least-privilege GitHub tokens.
-- Never let an AI agent run arbitrary shell commands without an allowlist and approval boundary.
-- Treat Figma/GitHub MCP output as untrusted input.
-- Do not deploy production workloads from this local demo.
+- Keep `.env` out of Git.  
+- Treat model output as untrusted; review PRs.  
+- Use least-privilege `gh` and GitHub tokens.

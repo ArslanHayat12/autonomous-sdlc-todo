@@ -8,9 +8,9 @@
       "esModuleInterop": true,
       "skipLibCheck": true,
       "forceConsistentCasingInFileNames": true,
-      "outDir": "dist",
-      "rootDir": "src"
+        "outDir": "dist",
+        "rootDir": "."
     },
-    "include": ["src/**/*.ts"],
+    "include": ["src/**/*.ts", "sdlc.config.ts"],
     "exclude": ["node_modules", "dist"]
   }

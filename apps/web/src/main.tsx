@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
- type Todo = { id: string; title: string; completed: boolean; createdAt: string };
+type Todo = { id: string; title: string; completed: boolean; createdAt: string };
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 
 function App() {
