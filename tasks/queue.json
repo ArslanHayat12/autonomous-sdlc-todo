@@ -5,11 +5,11 @@
       "id": "local:demo-1",
       "source": "local",
       "title": "Demo task",
-      "body": "Add a short comment in apps/web/src/main.tsx describing the app",
-      "instruction": "Add a short comment in apps/web/src/main.tsx describing the app",
+      "body": "Remove a short comment in apps/web/src/main.tsx describing the app",
+      "instruction": "Remove a short comment in apps/web/src/main.tsx describing the app",
       "status": "processing",
       "createdAt": "2026-11-06T12:00:00.000Z",
-      "updatedAt": "2026-11-06T14:21:35.199Z",
+      "updatedAt": "2026-11-09T04:30:47.666Z",
       "attempts": 1
     }
   ]
