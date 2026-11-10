@@ -2,14 +2,25 @@
   "version": 1,
   "tasks": [
     {
+      "id": "local:web-refactor-structure",
+      "source": "local",
+      "title": "Refactor web app structure",
+      "body": "Split Focus Todo UI into modules with typed API client and conventional git branch",
+      "instruction": "Refactor apps/web into App.tsx, api/todos.ts, types, and remove debug logging",
+      "status": "completed",
+      "createdAt": "2026-11-10T06:00:00.000Z",
+      "updatedAt": "2026-11-10T06:30:00.000Z",
+      "attempts": 1
+    },
+    {
       "id": "local:demo-1",
       "source": "local",
       "title": "Demo task",
       "body": "Remove a short comment in apps/web/src/main.tsx describing the app",
       "instruction": "Remove a short comment in apps/web/src/main.tsx describing the app",
-      "status": "processing",
+      "status": "completed",
       "createdAt": "2026-11-06T12:00:00.000Z",
-      "updatedAt": "2026-11-09T04:30:47.666Z",
+      "updatedAt": "2026-11-09T04:31:52.553Z",
       "attempts": 1
     }
   ]
