@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "version": 1,
+    "description": "Copy to sdlc.features.json and tune per repository."
+  },
+  "automation": {
+    "fullAgentAutomation": false,
+    "requireHumanApprovalBeforeMerge": false
+  },
+  "ai": {
+    "autoImplement": true,
+    "heroSkills": true,
+    "review": true,
+    "commitMessageFromSkills": true
+  },
+  "git": {
+    "isolatedWorktree": true,
+    "pruneStaleWorktreesOnStart": true,
+    "syncUncommittedFromMain": true,
+    "pullMainBeforeRun": true,
+    "pullMainAfterPr": true,
+    "pullMainAfterMerge": true,
+    "resetMainCheckoutAfterMerge": false,
+    "alignMainWithRemoteAfterRun": false
+  },
+  "delivery": {
+    "autoCommit": true,
+    "autoPush": true,
+    "autoPr": true,
+    "autoMerge": false,
+    "mergeUseGhAuto": true
+  },
+  "quality": {
+    "gatesInWorktree": true,
+    "verifyMainBeforeRun": false,
+    "mainVerificationCommand": "npm run build"
+  },
+  "deploy": {
+    "localAfterMerge": false
+  },
+  "integrations": {
+    "cursor": {
+      "agentEditAutoPublish": false
+    }
+  }
+}

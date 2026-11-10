@@ -1,13 +1,23 @@
 {
-  "name": "autonomous-sdlc-todo",
-  "implementationPaths": [
-    "apps/web/src/main.tsx",
-    "apps/web/src/App.tsx",
-    "apps/api/src/index.ts"
-  ],
-  "reviewPaths": ["apps/web/src/App.tsx", "apps/web/src/hooks/useTodos.ts", "apps/api/src/index.ts"],
-  "syncPathsFromMain": ["tests/todo.spec.ts", "playwright.config.ts"],
-  "commitMessageComponents": ["apps/web", "apps/api", "orchestrator"],
+  "meta": {
+    "version": 1,
+    "name": "autonomous-sdlc-todo",
+    "description": "How this repo is wired into the SDLC orchestrator (paths, commands, checks)."
+  },
+  "paths": {
+    "implementation": [
+      "apps/web/src/main.tsx",
+      "apps/web/src/App.tsx",
+      "apps/api/src/index.ts"
+    ],
+    "review": [
+      "apps/web/src/App.tsx",
+      "apps/web/src/hooks/useTodos.ts",
+      "apps/api/src/index.ts"
+    ],
+    "syncFromMainCheckout": ["tests/todo.spec.ts", "playwright.config.ts"],
+    "commitMessageComponents": ["apps/web", "apps/api", "orchestrator"]
+  },
   "commands": {
     "install": "npm install",
     "build": "npm run build",

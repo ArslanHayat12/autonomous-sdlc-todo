@@ -1,5 +1,7 @@
 # Hero skill catalog
 
+See **`sdlc-skills.config.json`** for install paths, catalog file names, and selection env vars.
+
 Skills in this folder are **loaded at run time** by the SDLC orchestrator for planning and code review. Each skill is a directory with `SKILL.md`.
 
 Installed skills:

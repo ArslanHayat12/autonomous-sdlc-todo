@@ -75,30 +75,35 @@ if (!existsSync(path.join(root, '.env'))) {
 }
 
 if (!existsSync(path.join(root, 'sdlc.project.json'))) {
-  writeFileSync(path.join(root, 'sdlc.project.json'), JSON.stringify(detectProfile(), null, 2) + '\n');
+  const p = detectProfile();
+  const project = {
+    meta: { version: 1, name: p.name, description: 'SDLC paths and commands for this repo.' },
+    paths: {
+      implementation: p.implementationPaths,
+      review: p.reviewPaths,
+      syncFromMainCheckout: p.syncPathsFromMain,
+      commitMessageComponents: p.commitMessageComponents,
+    },
+    commands: p.commands,
+    dast: p.dast,
+    docker: p.docker,
+  };
+  writeFileSync(path.join(root, 'sdlc.project.json'), JSON.stringify(project, null, 2) + '\n');
   actions.push('Created sdlc.project.json (edit paths & commands for your app)');
 } else {
   actions.push('sdlc.project.json already exists');
 }
 
 if (!existsSync(path.join(root, 'sdlc.features.json'))) {
-  writeFileSync(
-    path.join(root, 'sdlc.features.json'),
-    JSON.stringify(
-      {
-        aiHeroSkills: true,
-        autoImplement: true,
-        autoCommit: true,
-        autoPush: true,
-        autoPr: true,
-        autoMerge: true,
-        qualityGates: true,
-        isolatedWorktree: true,
-      },
-      null,
-      2,
-    ) + '\n',
-  );
+  const featuresExample = path.join(root, 'sdlc.features.example.json');
+  if (existsSync(featuresExample)) {
+    copyFileSync(featuresExample, path.join(root, 'sdlc.features.json'));
+  } else {
+    writeFileSync(
+      path.join(root, 'sdlc.features.json'),
+      JSON.stringify({ ai: { heroSkills: true, autoImplement: true }, delivery: { autoPr: true } }, null, 2) + '\n',
+    );
+  }
   actions.push('Created sdlc.features.json with sensible defaults');
 }
 
