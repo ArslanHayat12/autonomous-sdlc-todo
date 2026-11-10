@@ -42,11 +42,11 @@ import {
 import { resolveImplementationPaths, resolveReviewPaths } from './project-profile.js';
 import { formatStepBullet, logRunSummary, logSection, logErrorBlock } from './sdlc-log.js';
 import type { ExecutionReport, GateResult, SkillInvocation, WorkflowState } from './types.js';
-import { parseGitHubRepoFromUrl, resolveRemoteUrl } from '../gh-pr.js';
+import { resolveGitHubRepo } from '../gh-pr.js';
 import type { ReviewResult } from '../review-json.js';
 import type { SdlcConfigWithFeatures } from './feature-flags.js';
 import { resolveMonorepoRoot, resolvePrimarySyncSourceRoot } from './repo-root.js';
-import { bootstrapSdlcEnv, warnIfMissingOpenAiKey } from '../bootstrap-env.js';
+import { bootstrapSdlcEnv, warnIfGhNotReady, warnIfMissingOpenAiKey } from '../bootstrap-env.js';
 
 /** Set at each CLI/worker entry (honors `SDLC_REPO_ROOT`, `SDLC_PRIMARY_REPO_ROOT`). */
 let activeRepoRoot = resolveMonorepoRoot();
@@ -304,6 +304,7 @@ function bootstrapPipelineEnv(): void {
   const repoRoot = bootstrapSdlcEnv();
   setPipelineRepoRoots(resolveMonorepoRoot(), resolvePrimarySyncSourceRoot());
   warnIfMissingOpenAiKey(repoRoot);
+  warnIfGhNotReady(repoRoot);
 }
 
 export async function runSdlcFromArgv(argv: string[]): Promise<void> {
@@ -524,10 +525,9 @@ async function runPublishOnlyPipeline(
     await stateMgr.save(cfg.workflow.stateFile, state);
 
     const mergeCheck = mergeMgr.canAutoMerge(gateResults, false);
-    const remote = resolveRemoteUrl(session);
-    const repoIds = remote ? parseGitHubRepoFromUrl(remote) : null;
-    const owner = process.env.GITHUB_OWNER ?? repoIds?.owner;
-    const repo = process.env.GITHUB_REPO ?? repoIds?.repo;
+    const repoIds = resolveGitHubRepo(session);
+    const owner = repoIds?.owner;
+    const repo = repoIds?.repo;
 
     const canMerge =
       cfg.git.autoMerge &&
@@ -1163,10 +1163,9 @@ async function runFullPipeline(
     const blockMergeReview = runAiReview ? blockingReviewFindings(lastReview) : false;
     const mergeCheck = mergeMgr.canAutoMerge(gateResults, blockMergeReview);
 
-    const remote = resolveRemoteUrl(session);
-    const repoIds = remote ? parseGitHubRepoFromUrl(remote) : null;
-    const owner = process.env.GITHUB_OWNER ?? repoIds?.owner;
-    const repo = process.env.GITHUB_REPO ?? repoIds?.repo;
+    const repoIds = resolveGitHubRepo(session);
+    const owner = repoIds?.owner;
+    const repo = repoIds?.repo;
 
     const canMerge =
       cfg.git.autoMerge &&
@@ -1327,10 +1326,9 @@ async function runFullPipeline(
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    const remote = resolveRemoteUrl(session);
-    const repoIds = remote ? parseGitHubRepoFromUrl(remote) : null;
-    const owner = process.env.GITHUB_OWNER ?? repoIds?.owner ?? null;
-    const repo = process.env.GITHUB_REPO ?? repoIds?.repo ?? null;
+    const repoIds = resolveGitHubRepo(session);
+    const owner = repoIds?.owner ?? null;
+    const repo = repoIds?.repo ?? null;
     if (cfg.github.notifyOnFailure !== false) {
       await notifySdlcFailure({
         repoRoot: activeRepoRoot,

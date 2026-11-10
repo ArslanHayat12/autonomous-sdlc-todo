@@ -1,4 +1,4 @@
-import { pushAndOpenPr, updatePrDescription, parseGitHubRepoFromUrl, resolveRemoteUrl } from '../gh-pr.js';
+import { pushAndOpenPr, updatePrDescription, resolveGitHubRepo } from '../gh-pr.js';
 import type { WorktreeSession } from '../worktree.js';
 import type { SdlcConfig } from '../../sdlc.config.js';
 
@@ -21,16 +21,10 @@ export class PullRequestManager {
   }
 
   async updateBody(session: WorktreeSession, body: string): Promise<string | null> {
-    return updatePrDescription(session, body);
+    return updatePrDescription(session, body, session.branch);
   }
 
   resolveOwnerRepo(session: WorktreeSession): { owner: string; repo: string } | null {
-    const remote = resolveRemoteUrl(session);
-    const envOwner = process.env.GITHUB_OWNER;
-    const envRepo = process.env.GITHUB_REPO;
-    const parsed = remote ? parseGitHubRepoFromUrl(remote) : null;
-    const owner = envOwner ?? parsed?.owner;
-    const repo = envRepo ?? parsed?.repo;
-    return owner && repo ? { owner, repo } : null;
+    return resolveGitHubRepo(session);
   }
 }

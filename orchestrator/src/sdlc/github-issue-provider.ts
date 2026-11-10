@@ -1,6 +1,6 @@
 import { execCmd } from '../git-exec.js';
 import type { WorktreeSession } from '../worktree.js';
-import { parseGitHubRepoFromUrl, resolveRemoteUrl } from '../gh-pr.js';
+import { resolveGitHubRepo } from '../gh-pr.js';
 
 export type GhIssueRow = { number: number; title: string; body: string };
 
@@ -40,11 +40,7 @@ export function listOpenIssues(
 }
 
 export function resolveOwnerRepo(session: WorktreeSession): { owner: string; repo: string } | null {
-  const remote = resolveRemoteUrl(session);
-  const parsed = remote ? parseGitHubRepoFromUrl(remote) : null;
-  const owner = process.env.GITHUB_OWNER ?? parsed?.owner;
-  const repo = process.env.GITHUB_REPO ?? parsed?.repo;
-  return owner && repo ? { owner, repo } : null;
+  return resolveGitHubRepo(session);
 }
 
 export function closeIssue(session: WorktreeSession, owner: string, repo: string, issueNumber: number, body?: string): void {
