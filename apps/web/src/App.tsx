@@ -13,7 +13,7 @@ export function App() {
   const { todos, error, loading, addTodo, toggleTodo, removeTodo } = useTodos();
 
   const visible = filterTodos(todos, filter);
-
+console.log(visible);
   return (
     <main className="shell">
       <AppHeader />
