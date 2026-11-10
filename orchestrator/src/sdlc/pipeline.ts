@@ -31,6 +31,7 @@ import { pruneStaleSdlcWorktrees } from './worktree-prune.js';
 import { PipelineProgress } from './pipeline-progress.js';
 import { buildSdlcPrBody } from './pr-body-builder.js';
 import { syncSdlcPrBody } from './sdlc-pr-sync.js';
+import { postAiReviewOnPullRequest } from './review-pr-comments.js';
 import { notifySdlcFailure } from './sdlc-notify.js';
 import { buildFeatureBranchName } from './feature-branch-name.js';
 import {
@@ -1098,6 +1099,17 @@ async function runFullPipeline(
       } else {
         step('github', 'PR description update skipped (no PR number).');
       }
+      const reviewRepo = prMgr.resolveOwnerRepo(session);
+      if (prNumber !== null && reviewRepo) {
+        await postAiReviewOnPullRequest(
+          cfg,
+          session,
+          reviewRepo.owner,
+          reviewRepo.repo,
+          prNumber,
+          lastReview.findings,
+        );
+      }
     } else {
       if (!client) {
         reviewText = 'AI review skipped (OPENAI_API_KEY not set).';
@@ -1115,6 +1127,12 @@ async function runFullPipeline(
           ...prBodyBase,
           reviewText,
           mergeStatus: undefined,
+        });
+      }
+      const reviewRepo = prMgr.resolveOwnerRepo(session);
+      if (prNumber !== null && reviewRepo) {
+        await postAiReviewOnPullRequest(cfg, session, reviewRepo.owner, reviewRepo.repo, prNumber, [], {
+          skippedReason: reviewText,
         });
       }
     }

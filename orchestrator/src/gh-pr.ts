@@ -201,6 +201,113 @@ function parsePrNumberFromPullUrl(url: string): number | null {
   return m ? parsePrNumber(m[1]) : null;
 }
 
+export function getPullRequestHeadSha(
+  session: WorktreeSession,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): string | null {
+  if (!ghAvailable()) return null;
+  const out = execCmd(
+    session.path,
+    'gh',
+    ['pr', 'view', String(prNumber), '--repo', `${owner}/${repo}`, '--json', 'headRefOid', '-q', '.headRefOid'],
+    true,
+  ).trim();
+  if (out.startsWith('__CMD_FAIL__') || !out) return null;
+  return out;
+}
+
+/** First added line in a unified diff hunk (for inline review comments). */
+export function firstAddedLineInPatch(patch: string): number | null {
+  let newLine = 0;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('@@')) {
+      const m = line.match(/\+(\d+)/);
+      if (m) newLine = Number.parseInt(m[1], 10) - 1;
+      continue;
+    }
+    if (line.startsWith('+++')) continue;
+    if (line.startsWith('+')) {
+      newLine++;
+      return newLine;
+    }
+    if (line.startsWith(' ')) newLine++;
+  }
+  return null;
+}
+
+type PrFileEntry = { filename: string; patch?: string };
+
+function listPullRequestFiles(
+  session: WorktreeSession,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): PrFileEntry[] {
+  const out = execCmd(
+    session.path,
+    'gh',
+    ['api', `repos/${owner}/${repo}/pulls/${prNumber}/files`, '--paginate'],
+    true,
+  );
+  if (out.startsWith('__CMD_FAIL__')) return [];
+  try {
+    const data = JSON.parse(out) as unknown;
+    if (!Array.isArray(data)) return [];
+    const entries: PrFileEntry[] = [];
+    for (const f of data) {
+      if (typeof f !== 'object' || f === null) continue;
+      const o = f as Record<string, unknown>;
+      if (typeof o.filename !== 'string') continue;
+      entries.push({
+        filename: o.filename,
+        patch: typeof o.patch === 'string' ? o.patch : undefined,
+      });
+    }
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
+export function postPullRequestInlineComment(
+  session: WorktreeSession,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  input: { path: string; body: string; commitId: string },
+): boolean {
+  if (!ghAvailable()) return false;
+  const normalized = input.path.replace(/^\//, '');
+  const files = listPullRequestFiles(session, owner, repo, prNumber);
+  const file = files.find(f => f.filename === normalized || f.filename.endsWith(`/${normalized}`));
+  if (!file?.patch) return false;
+  const line = firstAddedLineInPatch(file.patch);
+  if (line === null) return false;
+
+  const out = execCmd(
+    session.path,
+    'gh',
+    [
+      'api',
+      `repos/${owner}/${repo}/pulls/${prNumber}/comments`,
+      '-f',
+      `body=${input.body}`,
+      '-f',
+      `commit_id=${input.commitId}`,
+      '-f',
+      `path=${file.filename}`,
+      '-F',
+      `line=${line}`,
+      '-f',
+      'side=RIGHT',
+    ],
+    true,
+  );
+  return !out.startsWith('__CMD_FAIL__');
+}
+
 export function commentOnPullRequest(
   session: WorktreeSession,
   owner: string,
