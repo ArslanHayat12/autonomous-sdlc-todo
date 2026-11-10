@@ -201,6 +201,23 @@ function parsePrNumberFromPullUrl(url: string): number | null {
   return m ? parsePrNumber(m[1]) : null;
 }
 
+export function commentOnPullRequest(
+  session: WorktreeSession,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  body: string,
+): boolean {
+  if (!ghAvailable()) return false;
+  const out = execCmd(
+    session.path,
+    'gh',
+    ['pr', 'comment', String(prNumber), '--repo', `${owner}/${repo}`, '--body', body],
+    true,
+  );
+  return !out.startsWith('__CMD_FAIL__');
+}
+
 export async function updatePrDescription(session: WorktreeSession, body: string): Promise<string | null> {
   if (!ghAvailable()) return null;
   const remote = resolveRemoteUrl(session);

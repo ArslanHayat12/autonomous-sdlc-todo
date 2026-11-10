@@ -114,6 +114,10 @@ Environment overrides:
 | `SDLC_SKIP_ALIGN_MAIN_AFTER_RUN` | `1` skips **`git fetch` + `checkout -f <base>` + `reset --hard origin/<base>`** after each run when **`alignMainWithRemoteAfterRun`** is true |
 | `SDLC_CLEAN_UNTRACKED_AFTER_ALIGN` | `1` runs **`git clean -fd`** after align (deletes untracked files — use only if you accept data loss) |
 | `SDLC_CURSOR_PUBLISH_ON_STOP` | `1` allows the Cursor **`stop`** hook to run **`npm run sdlc:publish`** (also set **`agentEditAutoPublish`** in `sdlc.features.json`) |
+| `SDLC_SKIP_PR_CHECKLIST` | `1` skips live PR body updates (pipeline checklist + AI Hero skill table) |
+| `SDLC_PR_STEP_COMMENTS` | `1` posts a PR comment after each successful pipeline step (off by default) |
+| `SDLC_SKIP_PR_ERROR_COMMENT` | `1` skips the failure comment on the PR |
+| `SDLC_NOTIFY_ON_ERROR` | `0` skips writing `.sdlc/last-error.json` and PR failure comments |
 
 ## What `npm run sdlc` does
 
@@ -126,7 +130,7 @@ Environment overrides:
 7. **Implements** via OpenAI JSON patches (or a tiny fallback when no key).  
 8. Runs **quality gates** from config (build, audit, e2e, optional DAST curl, optional `docker compose build`). **Skipped** gates are logged as **skipped**, not **passed**.  
 9. **Commits** with a Conventional-Commit **title + body** (OpenAI + selected skills when **`autoCommitMessageFromSkills`** and `OPENAI_API_KEY` are set; else template).  
-10. **Pushes** + **ensures PR labels exist** (`gh label create … --force` for each configured label, unless `SDLC_SKIP_LABEL_ENSURE=1`) + **`gh pr create`** + optional **pull on base branch** (`autoPullMainAfterPr`).  
+10. **Pushes** + **ensures PR labels exist** (`gh label create … --force` for each configured label, unless `SDLC_SKIP_LABEL_ENSURE=1`) + **`gh pr create`** with a **live checklist** (✅ per step) and **AI Hero skills** table (refreshed after each major phase) + optional **pull on base branch** (`autoPullMainAfterPr`).  
 11. **AI review** loop (up to `maxAiReviewIterations`) with optional auto-fix commits + push.  
 12. **Sync branch for merge**: **`git fetch`**, **`git rebase origin/<baseBranch>`** on the feature branch, **`git push --force-with-lease`** (unless **`SDLC_SKIP_SYNC_BEFORE_MERGE=1`**) so GitHub does not report “not mergeable” when the default branch advanced mid-run.  
 13. **`gh pr merge`** (`--squash` per `mergeStrategy`) — tries **`--auto`** first when **`mergeUseGhAuto`** is true (or **`SDLC_MERGE_USE_AUTO=1`**), then a direct merge if queueing fails; adds **`--delete-branch`** when **`cleanupFeatureBranchAfterMerge`** is true — **never** `--admin`; branch protection still applies; optional **pull** on local `main` (`autoPullMainAfterMerge`).  
@@ -157,6 +161,8 @@ npm run build
 
 Edit **`orchestrator/sdlc.config.ts`** for AI limits, which gates are mandatory, PR labels, merge strategy, Docker health URLs, etc. **Do not put secrets in this file** — use `.env` / environment variables only.
 
+**Feature branch names** (`git.featureBranchNaming`, default **`semantic`**): derived from the instruction as `{type}/{kebab-slug}-{6hex}` — e.g. `feat/add-todo-filters-a3f91b`, `fix/api-500-on-delete-b2c4d1`, `refactor/split-web-app-c91e02`. Types are inferred (`feat`, `fix`, `chore`, `refactor`, `docs`, `test`, …). Optional `git.featureBranchScope` → `feat/<scope>-slug-abc123`. Set **`featureBranchNaming`: `"timestamp"`** to restore legacy `sdlc/agent-<iso-stamp>` names.
+
 ### Feature toggles (`sdlc.features.json`)
 
 Copy or edit **`sdlc.features.json`** at the **repository root** (next to the root `package.json`). Keys are optional; omitted keys use defaults (`npm run sdlc -- --dry-run` prints the merged result).
@@ -171,7 +177,7 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 | `alignMainWithRemoteAfterRun` | `false` | `true`: after **every** full SDLC / `--publish` run, force **`git checkout -f <base>`** + **`git reset --hard origin/<base>`** so local base matches GitHub (resolves dirty/conflict state). Optional untracked wipe: **`SDLC_CLEAN_UNTRACKED_AFTER_ALIGN=1`**. |
 | `agentEditAutoPublish` | `false` | `true`: Cursor **`stop`** hook may run **`npm run sdlc:publish`** when **`SDLC_CURSOR_PUBLISH_ON_STOP=1`** (see README “Cursor agent”). |
 | `isolatedWorktree` | `true` | `true`: linked worktree under `.sdlc-worktrees/`. `false`: new branch in the main clone (requires clean tree). |
-| `pruneStaleWorktreesOnStart` | `true` | Remove old `sdlc__agent-*` worktrees before each run (when worktrees are enabled). |
+| `pruneStaleWorktreesOnStart` | `true` | Remove stale linked worktrees under `.sdlc-worktrees/` before each run. |
 | `autoImplement` | `true` | OpenAI (or fallback) code edits. `false`: plan + gates only, no patch application. |
 | `aiHeroSkills` | `true` | Discover `skills/*/SKILL.md`, route into plan/review prompts. `false`: skip skill discovery. |
 | `aiReview` | `true` | Post-PR AI review loop. `false`: skip review and auto-fix iterations. |
