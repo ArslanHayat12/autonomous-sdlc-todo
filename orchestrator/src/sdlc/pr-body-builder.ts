@@ -1,5 +1,6 @@
 import type { GateResult, SkillInvocation } from './types.js';
 import type { PipelineProgress } from './pipeline-progress.js';
+import type { PrCommitSkillRecord } from './commit-skills-log.js';
 
 export type PrBodyInput = {
   instruction: string;
@@ -7,6 +8,7 @@ export type PrBodyInput = {
   progress: PipelineProgress;
   selectedSkillIds: string[];
   skillInvocations: SkillInvocation[];
+  commitSkillRecords: PrCommitSkillRecord[];
   implementationSummary: string;
   gateResults: GateResult[];
   changedFiles: string[];
@@ -50,6 +52,47 @@ function heroSkillsSection(selectedSkillIds: string[], invocations: SkillInvocat
   return lines.join('\n');
 }
 
+function roleLabel(role: PrCommitSkillRecord['role']): string {
+  switch (role) {
+    case 'implementation':
+      return 'Implementation (+ commit message when enabled)';
+    case 'review-fix':
+      return 'Review auto-fix';
+    case 'publish':
+      return 'Publish (no AI implementation)';
+    default:
+      return 'Other';
+  }
+}
+
+function commitSkillsPerCommitSection(records: PrCommitSkillRecord[]): string {
+  const lines: string[] = [
+    `## AI Hero skills per commit`,
+    ``,
+    `Each commit on this PR branch and which \`skills/<id>/SKILL.md\` IDs were in the SDLC prompts for that step (plan, implementation, review, or skill-aware commit message).`,
+    ``,
+  ];
+
+  if (!records.length) {
+    lines.push(`_No commits on the feature branch yet (or branch equals base SHA)._`);
+    return lines.join('\n');
+  }
+
+  lines.push(`| Commit | Subject | Step | Hero skills |`);
+  lines.push(`| ------ | ------- | ---- | ----------- |`);
+
+  for (const r of records) {
+    const skills =
+      r.skillIds.length > 0
+        ? r.skillIds.map(id => `\`${id}\``).join(', ')
+        : '_none (no Hero routing this run)_';
+    const subj = r.subject.replace(/\|/g, '\\|').replace(/`/g, "'");
+    lines.push(`| \`${r.shortSha}\` | ${subj} | ${roleLabel(r.role)} | ${skills} |`);
+  }
+
+  return lines.join('\n');
+}
+
 export function buildSdlcPrBody(input: PrBodyInput): string {
   const gateBlock =
     input.gateResults.length > 0
@@ -64,6 +107,8 @@ export function buildSdlcPrBody(input: PrBodyInput): string {
     input.progress.checklistMarkdown(),
     ``,
     heroSkillsSection(input.selectedSkillIds, input.skillInvocations),
+    ``,
+    commitSkillsPerCommitSection(input.commitSkillRecords),
     ``,
     `## Business requirement`,
     input.instruction,

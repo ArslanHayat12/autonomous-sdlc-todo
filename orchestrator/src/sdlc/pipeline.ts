@@ -33,6 +33,11 @@ import { buildSdlcPrBody } from './pr-body-builder.js';
 import { syncSdlcPrBody } from './sdlc-pr-sync.js';
 import { notifySdlcFailure } from './sdlc-notify.js';
 import { buildFeatureBranchName } from './feature-branch-name.js';
+import {
+  appendCommitSkillRecord,
+  resolvePrCommitSkillRecords,
+  type PrCommitSkillRecord,
+} from './commit-skills-log.js';
 import { resolveReviewPaths } from './project-profile.js';
 import { formatStepBullet, logRunSummary, logSection, logErrorBlock } from './sdlc-log.js';
 import type { ExecutionReport, GateResult, SkillInvocation, WorkflowState } from './types.js';
@@ -671,6 +676,7 @@ async function runFullPipeline(
 
   const gateResults: GateResult[] = [];
   const skillInvocations: SkillInvocation[] = [];
+  const commitSkillLog: PrCommitSkillRecord[] = [];
   let implementationSummary = '';
   let reviewText = '';
   let prUrl: string | null = null;
@@ -907,6 +913,13 @@ async function runFullPipeline(
         progress.mark('commit', 'skipped', 'no diff');
       } else {
         progress.mark('commit', 'succeeded', title.slice(0, 120));
+        appendCommitSkillRecord(
+          commitSkillLog,
+          session,
+          title,
+          'implementation',
+          cfg.features.aiHeroSkills ? selectedIds : [],
+        );
       }
     }
     if (cfg.git.autoPush) {
@@ -943,11 +956,19 @@ async function runFullPipeline(
       progress,
       selectedSkillIds: selectedIds,
       skillInvocations,
+      commitSkillRecords: resolvePrCommitSkillRecords(session, state.baseSha ?? session.baseSha, commitSkillLog),
       implementationSummary,
       gateResults,
       changedFiles: changedFiles.length ? changedFiles : (diffStat ? [diffStat] : []),
       featureBranch: session.branch,
       commitSha,
+    };
+    const refreshPrCommitSkills = (): void => {
+      prBodyBase.commitSkillRecords = resolvePrCommitSkillRecords(
+        session,
+        state.baseSha ?? session.baseSha,
+        commitSkillLog,
+      );
     };
 
     if (cfg.git.autoCreatePr) {
@@ -960,6 +981,7 @@ async function runFullPipeline(
         step('github', 'PR creation skipped: no commit was pushed.');
         progress.mark('pr', 'skipped', 'no commit');
       } else {
+        refreshPrCommitSkills();
         const pr = await prMgr.createOrUpdate(
           session,
           instruction,
@@ -972,6 +994,7 @@ async function runFullPipeline(
         step('github', pr.message);
         if (pr.prNumber !== null) {
           progress.mark('pr', 'succeeded', pr.prUrl ?? `PR #${pr.prNumber}`);
+          refreshPrCommitSkills();
           await syncSdlcPrBody(prMgr, cfg, session, prNumber, prBodyBase, 'pr');
         } else {
           progress.mark('pr', 'failed', pr.message.slice(0, 200));
@@ -1025,11 +1048,22 @@ async function runFullPipeline(
               lastReview = { ...lastReview, needsMoreChanges: false, patches: [] };
               break;
             }
-            await gitCommitAll(
+            const reviewCommitTitle = `fix(sdlc): address review iteration ${iter + 1}`;
+            const reviewCommitted = await gitCommitAll(
               session,
-              `fix(sdlc): address review iteration ${iter + 1}`,
+              reviewCommitTitle,
               `Automated fixes from AI Hero review.\n\nFindings addressed:\n${reviewText.slice(0, 2000)}`,
             );
+            if (reviewCommitted) {
+              appendCommitSkillRecord(
+                commitSkillLog,
+                session,
+                reviewCommitTitle,
+                'review-fix',
+                cfg.features.aiHeroSkills ? selectedIds : [],
+              );
+              refreshPrCommitSkills();
+            }
             if (cfg.git.autoPush) gitPush(session);
           }
           iter++;
@@ -1048,6 +1082,7 @@ async function runFullPipeline(
         reviewOk ? 'no blocking findings' : 'critical/high findings remain',
       );
       if (prNumber !== null) {
+        refreshPrCommitSkills();
         await syncSdlcPrBody(
           prMgr,
           cfg,
@@ -1075,6 +1110,7 @@ async function runFullPipeline(
       }
       progress.mark('review', 'skipped', reviewText.slice(0, 120));
       if (prNumber !== null) {
+        refreshPrCommitSkills();
         await syncSdlcPrBody(prMgr, cfg, session, prNumber, {
           ...prBodyBase,
           reviewText,
@@ -1154,6 +1190,7 @@ async function runFullPipeline(
     }
 
     if (prNumber !== null) {
+      refreshPrCommitSkills();
       await syncSdlcPrBody(prMgr, cfg, session, prNumber, {
         ...prBodyBase,
         reviewText,
@@ -1188,6 +1225,7 @@ async function runFullPipeline(
     }
 
     if (prNumber !== null) {
+      refreshPrCommitSkills();
       await syncSdlcPrBody(prMgr, cfg, session, prNumber, {
         ...prBodyBase,
         reviewText,

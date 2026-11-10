@@ -28,11 +28,22 @@ test('buildSdlcPrBody lists Hero skills prominently', () => {
         evidence: 'SKILL.md present',
       },
     ],
+    commitSkillRecords: [
+      {
+        sha: 'abc1234567890',
+        shortSha: 'abc1234',
+        subject: 'feat(sdlc): refactor todos',
+        role: 'implementation',
+        skillIds: ['typescript-strict', 'react-accessibility'],
+      },
+    ],
     implementationSummary: 'Refactored todos API',
     gateResults: [{ id: 'build', status: 'passed', durationMs: 1, output: '', mandatory: true }],
     changedFiles: ['apps/web/src/App.tsx'],
   });
   assert.match(body, /## AI Hero skills \(this run\)/);
+  assert.match(body, /## AI Hero skills per commit/);
   assert.match(body, /`typescript-strict`/);
+  assert.match(body, /Implementation \(\+ commit message when enabled\)/);
   assert.match(body, /## Pipeline progress/);
 });
