@@ -119,6 +119,10 @@ export async function loadProjectProfile(repoRoot: string): Promise<SdlcProjectP
   }
 }
 
+export function resolveImplementationPaths(profile: SdlcProjectProfile): string[] {
+  return profile.implementationPaths.length ? profile.implementationPaths : defaultProjectProfile.implementationPaths;
+}
+
 export function resolveReviewPaths(profile: SdlcProjectProfile): string[] {
   return profile.reviewPaths.length ? profile.reviewPaths : profile.implementationPaths;
 }

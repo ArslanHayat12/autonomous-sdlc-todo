@@ -1,6 +1,7 @@
 import cors from 'cors';
 import express from 'express';
 import { TodoStore } from './todo-store.js';
+import { routeParam } from './route-params.js';
 import { parseTitle } from './validation.js';
 
 const app = express();
@@ -23,12 +24,18 @@ app.post('/api/todos', (req, res) => {
     res.status(400).json({ error: parsed.error });
     return;
   }
-  const todo = store.create(parsed.title);
+  const { title } = parsed;
+  const todo = store.create(title);
   res.status(201).json(todo);
 });
 
 app.patch('/api/todos/:id', (req, res) => {
-  const todo = store.update(req.params.id, {
+  const id = routeParam(req, 'id');
+  if (!id) {
+    res.status(400).json({ error: 'Invalid todo id' });
+    return;
+  }
+  const todo = store.update(id, {
     completed: typeof req.body?.completed === 'boolean' ? req.body.completed : undefined,
     title: typeof req.body?.title === 'string' ? req.body.title : undefined,
   });
@@ -40,7 +47,12 @@ app.patch('/api/todos/:id', (req, res) => {
 });
 
 app.delete('/api/todos/:id', (req, res) => {
-  if (!store.delete(req.params.id)) {
+  const id = routeParam(req, 'id');
+  if (!id) {
+    res.status(400).json({ error: 'Invalid todo id' });
+    return;
+  }
+  if (!store.delete(id)) {
     res.status(404).json({ error: 'Todo not found' });
     return;
   }
