@@ -33,6 +33,8 @@ import { buildSdlcPrBody } from './pr-body-builder.js';
 import { syncSdlcPrBody } from './sdlc-pr-sync.js';
 import { notifySdlcFailure } from './sdlc-notify.js';
 import { buildFeatureBranchName } from './feature-branch-name.js';
+import { resolveReviewPaths } from './project-profile.js';
+import { formatStepBullet, logRunSummary, logSection, logErrorBlock } from './sdlc-log.js';
 import type { ExecutionReport, GateResult, SkillInvocation, WorkflowState } from './types.js';
 import { parseGitHubRepoFromUrl, resolveRemoteUrl } from '../gh-pr.js';
 import type { ReviewResult } from '../review-json.js';
@@ -56,8 +58,8 @@ function trimGitOut(s: string): string {
 }
 
 function step(name: string, detail: string) {
-  const line = `[${new Date().toISOString()}] ${name}: ${detail}`;
-  logLines.push(line);
+  const { plain, line } = formatStepBullet(name, detail);
+  logLines.push(plain);
   console.log(line);
 }
 
@@ -337,7 +339,7 @@ export async function runSdlcFromArgv(argv: string[]): Promise<void> {
     await runFullPipeline(parsed, cfg, stateMgr);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`\nSDLC failed: ${msg}\n`);
+    logErrorBlock('SDLC failed', [msg]);
     process.exitCode = 1;
     throw e;
   }
@@ -564,7 +566,12 @@ async function runPublishOnlyPipeline(
     };
     const reportPath = await reportGen.writeMarkdown(activeRepoRoot, cfg.workflow.reportDir, report);
     step('report', reportPath);
-    console.log(`\nFinished (publish).\n  Report: ${reportPath}\n  PR: ${prUrl ?? 'n/a'}\n  Merge: ${mergeStatus}\n`);
+    logRunSummary([
+      { label: 'Mode', value: 'publish' },
+      { label: 'Report', value: reportPath },
+      { label: 'PR', value: prUrl ?? 'n/a', tone: prUrl ? 'ok' : 'skip' },
+      { label: 'Merge', value: mergeStatus, tone: mergeStatus.includes('merged') ? 'ok' : 'info' },
+    ]);
   } catch (e) {
     state.phase = 'failed';
     await stateMgr.save(cfg.workflow.stateFile, state);
@@ -622,6 +629,7 @@ async function runFullPipeline(
   };
   await stateMgr.save(cfg.workflow.stateFile, state);
 
+  logSection('SDLC pipeline');
   step('instruction', instruction);
   const origBranch = execGit(activeRepoRoot, ['branch', '--show-current'], true).trim() || '(detached)';
   step(
@@ -967,7 +975,7 @@ async function runFullPipeline(
     state.phase = 'review';
     await stateMgr.save(cfg.workflow.stateFile, state);
 
-    const reviewPaths = ['apps/web/src/main.tsx', 'apps/api/src/index.ts'];
+    const reviewPaths = resolveReviewPaths(cfg.project);
 
     const runAiReview = Boolean(client && cfg.features.aiReview && cfg.aiHero.executionEnabled);
     if (runAiReview && client) {
@@ -1183,9 +1191,12 @@ async function runFullPipeline(
     const worktreeNote = cfg.git.worktreesEnabled
       ? ' (worktree removed unless SDLC_KEEP_WORKTREE=1)'
       : ' (feature branch removed; main checkout restored)';
-    console.log(
-      `\nFinished.\n  Report: ${reportPath}${worktreeNote}\n  PR: ${prUrl ?? 'n/a'}\n  Merge: ${mergeStatus}\n`,
-    );
+    logRunSummary([
+      { label: 'Report', value: `${reportPath}${worktreeNote}` },
+      { label: 'PR', value: prUrl ?? 'n/a', tone: prUrl ? 'ok' : 'skip' },
+      { label: 'Merge', value: mergeStatus, tone: state.mergeSucceeded ? 'ok' : 'info' },
+      { label: 'Deploy', value: deployStatus, tone: deployStatus.includes('Skipped') ? 'skip' : 'ok' },
+    ]);
 
     const mandatoryFailed = gateResults.some(g => g.mandatory && g.status === 'failed');
     const mergeOk = state.mergeSucceeded === true;
