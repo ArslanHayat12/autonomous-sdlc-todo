@@ -1,6 +1,26 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+/** Fix common `.env` typos (e.g. `OPENAI_API_KEY=Y=sk-…`). */
+export function normalizeOpenAiKey(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  let val = raw.trim();
+  if (!val) return undefined;
+  if (val.startsWith('Y=')) val = val.slice(2).trim();
+  return val || undefined;
+}
+
+export function hasOpenAiKey(): boolean {
+  return Boolean(normalizeOpenAiKey(process.env.OPENAI_API_KEY));
+}
+
+/** Normalize `process.env.OPENAI_API_KEY` after `loadDotEnv`. */
+export function applyOpenAiKeyNormalization(): void {
+  const normalized = normalizeOpenAiKey(process.env.OPENAI_API_KEY);
+  if (normalized) process.env.OPENAI_API_KEY = normalized;
+  else if (process.env.OPENAI_API_KEY?.trim() === '') delete process.env.OPENAI_API_KEY;
+}
+
 /** Load repo-root `.env` into `process.env` (does not override existing env vars). */
 export function loadDotEnv(repoRoot: string): void {
   const file = path.join(repoRoot, '.env');
