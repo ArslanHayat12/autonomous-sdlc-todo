@@ -319,5 +319,6 @@ export const sdlcConfig: SdlcConfig = {
     neverBypassBranchProtection: true,
     forbidGitClean: true,
   },
-  syncPathsFromMain: ['tests/todo.spec.ts', 'playwright.config.ts'],
+  /** Overridden by `sdlc.project.json` → `syncPathsFromMain` when present. */
+  syncPathsFromMain: [],
 };

@@ -33,6 +33,7 @@ import { buildSdlcPrBody } from './pr-body-builder.js';
 import { syncSdlcPrBody } from './sdlc-pr-sync.js';
 import { notifySdlcFailure } from './sdlc-notify.js';
 import { buildFeatureBranchName } from './feature-branch-name.js';
+import { resolveReviewPaths } from './project-profile.js';
 import type { ExecutionReport, GateResult, SkillInvocation, WorkflowState } from './types.js';
 import { parseGitHubRepoFromUrl, resolveRemoteUrl } from '../gh-pr.js';
 import type { ReviewResult } from '../review-json.js';
@@ -441,15 +442,17 @@ async function runPublishOnlyPipeline(
     if (cfg.features.qualityGates) {
       gateResults.push(
         await gateOrch.runGate('build', session.path, async p =>
-          Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], p.timeoutMs)),
+          Promise.resolve(testRunner.runShell(session.path, cfg.project.commands.build, p.timeoutMs)),
         ),
       );
       gateResults.push(
-        await gateOrch.runGate('dependencyAudit', session.path, async p =>
-          Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'security'], p.timeoutMs)),
-        ),
+        await gateOrch.runGate('dependencyAudit', session.path, async p => {
+          const sec = cfg.project.commands.security.trim();
+          if (sec) return Promise.resolve(testRunner.runShell(session.path, sec, p.timeoutMs));
+          return Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['audit', '--audit-level=high'], p.timeoutMs));
+        }),
       );
-      if (cfg.qualityGates.e2e.enabled && process.env.SDLC_SKIP_PLAYWRIGHT !== '1') {
+      if (cfg.qualityGates.e2e.enabled && cfg.project.commands.e2e.trim() && process.env.SDLC_SKIP_PLAYWRIGHT !== '1') {
         runInWorktree(session, 'npx', ['playwright', 'install', 'chromium']);
       }
       gateResults.push(
@@ -457,10 +460,13 @@ async function runPublishOnlyPipeline(
           if (!cfg.qualityGates.e2e.enabled) {
             return { ok: false, output: 'e2e disabled in sdlc.config.ts (not executed).' };
           }
+          if (!cfg.project.commands.e2e.trim()) {
+            return { ok: false, output: 'e2e not configured in sdlc.project.json (skipped).' };
+          }
           if (process.env.SDLC_SKIP_PLAYWRIGHT === '1') {
             return { ok: false, output: 'Skipped via SDLC_SKIP_PLAYWRIGHT=1 (not counted as passed).' };
           }
-          return testRunner.runInWorktree(session.path, 'npx', ['playwright', 'test'], cfg.qualityGates.e2e.timeoutMs);
+          return testRunner.runShell(session.path, cfg.project.commands.e2e, cfg.qualityGates.e2e.timeoutMs);
         }),
       );
     } else {
@@ -693,7 +699,8 @@ async function runFullPipeline(
     }
     progress.mark('sync', 'succeeded');
 
-    runInWorktree(session, 'npm', ['install']);
+    const installOut = testRunner.runShell(session.path, cfg.project.commands.install, 600_000);
+    step('install', installOut.ok ? 'Dependencies installed.' : installOut.output.slice(-400));
 
     let selectedIds: string[] = [];
     let discovered: HeroSkill[] = [];
@@ -749,13 +756,13 @@ async function runFullPipeline(
         if (client) {
           const agent = new AgentExecutor(client, model);
           const r = await agent.implement(instruction, {
-            paths: ['apps/web/src/main.tsx', 'apps/api/src/index.ts'],
+            paths: cfg.project.implementationPaths,
             repoRoot: session.path,
           });
           await agent.apply(session.path, r.patches);
           implementationSummary = r.summary;
         } else {
-          const fb = await fallbackConsoleLogPatch(session.path, instruction);
+          const fb = await fallbackConsoleLogPatch(session.path, instruction, cfg.project.implementationPaths);
           if (fb.length) {
             await applyPatches(session.path, fb);
             implementationSummary =
@@ -764,7 +771,11 @@ async function runFullPipeline(
             implementationSummary = 'No OPENAI_API_KEY: skipped automated code edits.';
           }
         }
-        const buildTry = testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], cfg.qualityGates.build.timeoutMs);
+        const buildTry = testRunner.runShell(
+          session.path,
+          cfg.project.commands.build,
+          cfg.qualityGates.build.timeoutMs,
+        );
         if (buildTry.ok) break;
         if (implAttempt >= cfg.workflow.maxImplementationRetries) {
           progress.mark('implement', 'failed', `build failed after ${implAttempt} attempts`);
@@ -778,17 +789,19 @@ async function runFullPipeline(
 
     gateResults.push(
       await gateOrch.runGate('build', session.path, async p =>
-        Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], p.timeoutMs)),
+        Promise.resolve(testRunner.runShell(session.path, cfg.project.commands.build, p.timeoutMs)),
       ),
     );
 
     gateResults.push(
-      await gateOrch.runGate('dependencyAudit', session.path, async p =>
-        Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'security'], p.timeoutMs)),
-      ),
+      await gateOrch.runGate('dependencyAudit', session.path, async p => {
+        const sec = cfg.project.commands.security.trim();
+        if (sec) return Promise.resolve(testRunner.runShell(session.path, sec, p.timeoutMs));
+        return Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['audit', '--audit-level=high'], p.timeoutMs));
+      }),
     );
 
-    if (cfg.qualityGates.e2e.enabled && process.env.SDLC_SKIP_PLAYWRIGHT !== '1') {
+    if (cfg.qualityGates.e2e.enabled && cfg.project.commands.e2e.trim() && process.env.SDLC_SKIP_PLAYWRIGHT !== '1') {
       runInWorktree(session, 'npx', ['playwright', 'install', 'chromium']);
     }
     gateResults.push(
@@ -796,10 +809,13 @@ async function runFullPipeline(
         if (!cfg.qualityGates.e2e.enabled) {
           return { ok: false, output: 'e2e disabled in sdlc.config.ts (not executed).' };
         }
+        if (!cfg.project.commands.e2e.trim()) {
+          return { ok: false, output: 'e2e not configured in sdlc.project.json commands.e2e (skipped).' };
+        }
         if (process.env.SDLC_SKIP_PLAYWRIGHT === '1') {
           return { ok: false, output: 'Skipped via SDLC_SKIP_PLAYWRIGHT=1 (not counted as passed).' };
         }
-        return testRunner.runInWorktree(session.path, 'npx', ['playwright', 'test'], cfg.qualityGates.e2e.timeoutMs);
+        return testRunner.runShell(session.path, cfg.project.commands.e2e, cfg.qualityGates.e2e.timeoutMs);
       }),
     );
 
@@ -808,14 +824,21 @@ async function runFullPipeline(
         if (!cfg.qualityGates.dast.enabled) {
           return { ok: false, output: 'DAST disabled in sdlc.config.ts (not executed).' };
         }
+        if (!cfg.project.dast.enabled || !cfg.project.dast.checks.length) {
+          return { ok: false, output: 'DAST disabled in sdlc.project.json (not executed).' };
+        }
+        const lines: string[] = [];
         try {
-          execFileSync('curl', ['-sf', 'http://127.0.0.1:4000/health'], { timeout: 5000 });
-          execFileSync('curl', ['-sf', 'http://127.0.0.1:4000/api/todos'], { timeout: 5000 });
-          return { ok: true, output: 'GET /health and /api/todos OK (local smoke).' };
+          for (const check of cfg.project.dast.checks) {
+            const args = check.method === 'HEAD' ? ['-sfI', check.url] : ['-sf', check.url];
+            execFileSync('curl', args, { timeout: 8000 });
+            lines.push(`${check.method ?? 'GET'} ${check.url} OK`);
+          }
+          return { ok: true, output: lines.join('; ') };
         } catch (e) {
           return {
             ok: false,
-            output: `DAST smoke failed (start dev servers or disable dast): ${String((e as Error).message)}`,
+            output: `DAST smoke failed: ${String((e as Error).message)}`,
           };
         }
       }),
@@ -823,7 +846,7 @@ async function runFullPipeline(
 
     gateResults.push(
       await gateOrch.runGate('dockerBuild', activeRepoRoot, async () => {
-        if (!cfg.qualityGates.dockerBuild.enabled) {
+        if (!cfg.docker.enabled || !cfg.qualityGates.dockerBuild.enabled) {
           return { ok: false, output: 'docker build gate disabled (not executed).' };
         }
         const short = execGit(session.path, ['rev-parse', '--short', 'HEAD']).trim();
@@ -850,7 +873,10 @@ async function runFullPipeline(
     const bodyParts: Parameters<typeof commitGen.generateBody>[0] = {
       why: `Autonomous SDLC for: ${instruction}`,
       what: implementationSummary,
-      components: ['apps/web', 'apps/api', 'orchestrator'],
+      components:
+        cfg.project.commitMessageComponents.length > 0
+          ? cfg.project.commitMessageComponents
+          : [cfg.project.name],
       architecture: archNote,
       security: 'npm audit --audit-level=high; optional DAST HTTP smoke when enabled.',
       tests: gateSummary.slice(0, 4000),
@@ -967,7 +993,7 @@ async function runFullPipeline(
     state.phase = 'review';
     await stateMgr.save(cfg.workflow.stateFile, state);
 
-    const reviewPaths = ['apps/web/src/main.tsx', 'apps/api/src/index.ts'];
+    const reviewPaths = resolveReviewPaths(cfg.project);
 
     const runAiReview = Boolean(client && cfg.features.aiReview && cfg.aiHero.executionEnabled);
     if (runAiReview && client) {
@@ -983,7 +1009,7 @@ async function runFullPipeline(
         while (iter < cfg.workflow.maxAiReviewIterations) {
           const applied = await fixer.applyPatchesIfAny(session, lastReview);
           if (applied) {
-            const b = testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], cfg.qualityGates.build.timeoutMs);
+            const b = testRunner.runShell(session.path, cfg.project.commands.build, cfg.qualityGates.build.timeoutMs);
             if (!b.ok) throw new Error(`Review fix broke build: ${b.output.slice(-1500)}`);
             await gitCommitAll(
               session,

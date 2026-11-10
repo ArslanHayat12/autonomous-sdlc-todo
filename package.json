@@ -15,6 +15,7 @@
     "sdlc:worker": "npm --workspace orchestrator run sdlc:worker",
     "sdlc:status": "npm --workspace orchestrator run sdlc:worker-status",
     "sdlc:stop": "npm --workspace orchestrator run sdlc:worker-stop",
+    "sdlc:init": "node scripts/sdlc-init.mjs",
     "sdlc:dry-run": "npm run sdlc -- --dry-run",
     "sdlc:resume": "npm run sdlc -- --resume",
     "security": "npm audit --audit-level=high",

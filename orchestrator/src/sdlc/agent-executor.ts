@@ -43,22 +43,31 @@ Paths must be repo-relative forward slashes.`;
 export async function fallbackConsoleLogPatch(
   repoRoot: string,
   instruction: string,
+  candidatePaths: string[] = [],
 ): Promise<import('../patch.js').FilePatch[]> {
   const low = instruction.toLowerCase();
   if (!low.includes('console')) return [];
-  try {
-    const mainTsx = path.join(repoRoot, 'apps/web/src/main.tsx');
-    const src = await readFile(mainTsx, 'utf8');
-    if (src.includes('orchestrator task') || /console\.log\s*\(/.test(src)) return [];
-    const hook = "  React.useEffect(() => { console.log('[SDLC]', 'orchestrator task'); }, []);\n";
-    if (src.includes('function App()')) {
-      const idx = src.indexOf('function App()');
-      const brace = src.indexOf('{', idx);
-      const next = src.slice(0, brace + 1) + '\n' + hook + src.slice(brace + 1);
-      return [{ path: 'apps/web/src/main.tsx', content: next }];
+  for (const rel of candidatePaths) {
+    if (!/\.(tsx|jsx|ts|js)$/.test(rel)) continue;
+    try {
+      const abs = path.join(repoRoot, rel);
+      const src = await readFile(abs, 'utf8');
+      if (src.includes('[SDLC]') || /console\.log\s*\(/.test(src)) continue;
+      const hook =
+        rel.endsWith('.tsx') || rel.endsWith('.jsx')
+          ? "  useEffect(() => { console.log('[SDLC]', 'orchestrator task'); }, []);\n"
+          : "console.log('[SDLC]', 'orchestrator task');\n";
+      if (src.includes('function ') || src.includes('export default function')) {
+        const fn = src.indexOf('function ');
+        const brace = src.indexOf('{', fn > -1 ? fn : 0);
+        if (brace > -1) {
+          const next = src.slice(0, brace + 1) + '\n' + hook + src.slice(brace + 1);
+          return [{ path: rel.replace(/\\/g, '/'), content: next }];
+        }
+      }
+    } catch {
+      continue;
     }
-  } catch {
-    /* skip */
   }
   return [];
 }

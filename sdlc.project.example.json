@@ -1,0 +1,26 @@
+{
+  "name": "my-app",
+  "implementationPaths": [
+    "src/index.ts",
+    "src/main.tsx",
+    "src/App.tsx",
+    "app/page.tsx"
+  ],
+  "reviewPaths": [],
+  "syncPathsFromMain": [],
+  "commitMessageComponents": ["src"],
+  "commands": {
+    "install": "npm install",
+    "build": "npm run build",
+    "security": "npm audit --audit-level=high",
+    "e2e": ""
+  },
+  "dast": {
+    "enabled": false,
+    "checks": []
+  },
+  "docker": {
+    "enabled": false,
+    "healthUrls": []
+  }
+}

@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import type { QualityGatesConfig, GatePolicy } from '../../sdlc.config.js';
 import type { GateResult } from './types.js';
 
@@ -25,9 +25,34 @@ export class TestRunner {
       });
       return { ok: true, output: String(out) };
     } catch (e) {
-      return { ok: false, output: String((e as Error).message) };
+      const err = e as { stdout?: string; stderr?: string; message?: string };
+      const out = [err.stdout, err.stderr, err.message].filter(Boolean).join('\n');
+      return { ok: false, output: out || String(e) };
     } finally {
       void start;
+    }
+  }
+
+  runShell(cwd: string, command: string, timeoutMs: number): { ok: boolean; output: string } {
+    if (!command.trim()) return { ok: false, output: 'No command configured.' };
+    const start = now();
+    try {
+      const shell = process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : '/bin/sh';
+      const out = execSync(command, {
+        cwd,
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: process.env,
+        timeout: timeoutMs,
+        shell,
+      });
+      void start;
+      return { ok: true, output: String(out) };
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string; message?: string };
+      const out = [err.stdout, err.stderr, err.message].filter(Boolean).join('\n');
+      return { ok: false, output: out || String(e) };
     }
   }
 }

@@ -2,6 +2,21 @@
 
 A React + TypeScript Todo app, Express API, Docker Compose, Playwright E2E, and a **config-driven** SDLC orchestrator under `orchestrator/`.
 
+## Use in any project (clone → key → run)
+
+```bash
+git clone <repo-url> my-app && cd my-app
+npm run sdlc:init          # .env + sdlc.project.json
+# Edit .env → OPENAI_API_KEY=sk-...
+npm install && gh auth login
+npm run sdlc -- "Your task"
+```
+
+- **Secrets:** `.env` at repo root (loaded automatically by the orchestrator).
+- **Your app:** `sdlc.project.json` — implementation paths, `npm run build`, e2e, DAST URLs ([example](sdlc.project.example.json)).
+- **Toggles:** `sdlc.features.json` — merge, gates, worktrees.
+- **Adopt into an existing repo:** [docs/ADOPT-IN-YOUR-REPO.md](docs/ADOPT-IN-YOUR-REPO.md).
+
 ## Architecture (audit summary)
 
 | Area | Role |
@@ -11,6 +26,7 @@ A React + TypeScript Todo app, Express API, Docker Compose, Playwright E2E, and 
 | `orchestrator/` | Autonomous SDLC CLI — worktree isolation, OpenAI, `gh` PR/merge, optional Docker, **continuous worker** |
 | `orchestrator/sdlc.config.ts` | **Single policy file** for AI, quality gates, Git, GitHub, Docker, workflow limits |
 | `sdlc.features.json` | **Feature toggles** (optional JSON at repo root) — turn off worktrees, PR, merge, deploy, Hero skills, etc. without editing TypeScript |
+| `sdlc.project.json` | **Per-project profile** — source paths, build/test commands, DAST/Docker URLs (see `sdlc.project.example.json`) |
 | `skills/` | Local **AI Hero–style** `SKILL.md` files (install more via `SDLC_INSTALL_AIHERO_SKILLS=1` → `npx skills@latest add mattpocock/skills`) |
 | `docker-compose.yml` | Local API + dev web for Docker workflow |
 

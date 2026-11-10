@@ -1,0 +1,31 @@
+{
+  "name": "autonomous-sdlc-todo",
+  "implementationPaths": [
+    "apps/web/src/main.tsx",
+    "apps/web/src/App.tsx",
+    "apps/api/src/index.ts"
+  ],
+  "reviewPaths": ["apps/web/src/main.tsx", "apps/api/src/index.ts"],
+  "syncPathsFromMain": ["tests/todo.spec.ts", "playwright.config.ts"],
+  "commitMessageComponents": ["apps/web", "apps/api", "orchestrator"],
+  "commands": {
+    "install": "npm install",
+    "build": "npm run build",
+    "security": "npm run security",
+    "e2e": "npx playwright test"
+  },
+  "dast": {
+    "enabled": true,
+    "checks": [
+      { "url": "http://127.0.0.1:4000/health" },
+      { "url": "http://127.0.0.1:4000/api/todos" }
+    ]
+  },
+  "docker": {
+    "enabled": true,
+    "healthUrls": [
+      { "name": "api", "url": "http://127.0.0.1:4000/health" },
+      { "name": "web", "url": "http://127.0.0.1:5173" }
+    ]
+  }
+}
