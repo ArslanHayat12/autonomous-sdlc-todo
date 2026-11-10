@@ -1,14 +1,20 @@
 {
-  "name": "my-app",
-  "implementationPaths": [
-    "src/index.ts",
-    "src/main.tsx",
-    "src/App.tsx",
-    "app/page.tsx"
-  ],
-  "reviewPaths": [],
-  "syncPathsFromMain": [],
-  "commitMessageComponents": ["src"],
+  "meta": {
+    "version": 1,
+    "name": "my-app",
+    "description": "Copy to sdlc.project.json and point paths at your app layout."
+  },
+  "paths": {
+    "implementation": [
+      "src/index.ts",
+      "src/main.tsx",
+      "src/App.tsx",
+      "app/page.tsx"
+    ],
+    "review": [],
+    "syncFromMainCheckout": [],
+    "commitMessageComponents": ["src"]
+  },
   "commands": {
     "install": "npm install",
     "build": "npm run build",

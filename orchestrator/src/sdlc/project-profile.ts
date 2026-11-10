@@ -51,21 +51,45 @@ export const defaultProjectProfile: SdlcProjectProfile = {
 
 function mergeProfile(parsed: Record<string, unknown>): SdlcProjectProfile {
   const base = defaultProjectProfile;
+  const meta = (parsed.meta ?? {}) as Record<string, unknown>;
+  const paths = (parsed.paths ?? {}) as Record<string, unknown>;
   const cmd = (parsed.commands ?? {}) as Record<string, unknown>;
   const dast = (parsed.dast ?? {}) as Record<string, unknown>;
   const docker = (parsed.docker ?? {}) as Record<string, unknown>;
-  return {
-    name: typeof parsed.name === 'string' ? parsed.name : base.name,
-    implementationPaths: Array.isArray(parsed.implementationPaths)
+
+  const name =
+    typeof meta.name === 'string' ? meta.name : typeof parsed.name === 'string' ? parsed.name : base.name;
+
+  const implementationPaths = Array.isArray(paths.implementation)
+    ? (paths.implementation as string[])
+    : Array.isArray(parsed.implementationPaths)
       ? (parsed.implementationPaths as string[])
-      : base.implementationPaths,
-    reviewPaths: Array.isArray(parsed.reviewPaths) ? (parsed.reviewPaths as string[]) : base.reviewPaths,
-    syncPathsFromMain: Array.isArray(parsed.syncPathsFromMain)
+      : base.implementationPaths;
+
+  const reviewPaths = Array.isArray(paths.review)
+    ? (paths.review as string[])
+    : Array.isArray(parsed.reviewPaths)
+      ? (parsed.reviewPaths as string[])
+      : base.reviewPaths;
+
+  const syncPathsFromMain = Array.isArray(paths.syncFromMainCheckout)
+    ? (paths.syncFromMainCheckout as string[])
+    : Array.isArray(parsed.syncPathsFromMain)
       ? (parsed.syncPathsFromMain as string[])
-      : base.syncPathsFromMain,
-    commitMessageComponents: Array.isArray(parsed.commitMessageComponents)
+      : base.syncPathsFromMain;
+
+  const commitMessageComponents = Array.isArray(paths.commitMessageComponents)
+    ? (paths.commitMessageComponents as string[])
+    : Array.isArray(parsed.commitMessageComponents)
       ? (parsed.commitMessageComponents as string[])
-      : base.commitMessageComponents,
+      : base.commitMessageComponents;
+
+  return {
+    name,
+    implementationPaths,
+    reviewPaths,
+    syncPathsFromMain,
+    commitMessageComponents,
     commands: {
       install: typeof cmd.install === 'string' ? cmd.install : base.commands.install,
       build: typeof cmd.build === 'string' ? cmd.build : base.commands.build,

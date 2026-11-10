@@ -1,26 +1,46 @@
 {
-  "fullAgentAutomation": true,
-  "requireHumanApprovalBeforeMerge": false,
-  "runMainRepoVerificationBeforeSdlc": true,
-  "mainRepoVerificationCommand": "npm run build",
-  "isolatedWorktree": true,
-  "pruneStaleWorktreesOnStart": true,
-  "autoImplement": true,
-  "aiHeroSkills": true,
-  "aiReview": true,
-  "qualityGates": false,
-  "autoCommit": true,
-  "autoPush": true,
-  "autoPr": true,
-  "autoMerge": true,
-  "autoDeployLocal": false,
-  "syncUncommittedFromMain": true,
-  "autoPullMainBeforeRun": true,
-  "autoPullMainAfterPr": true,
-  "autoPullMainAfterMerge": true,
-  "autoCommitMessageFromSkills": true,
-  "resetMainCheckoutAfterMerge": true,
-  "alignMainWithRemoteAfterRun": true,
-  "agentEditAutoPublish": false,
-  "mergeUseGhAuto": true
+  "meta": {
+    "version": 1,
+    "description": "SDLC feature toggles. Edit nested groups; orchestrator merges into flat runtime flags."
+  },
+  "automation": {
+    "fullAgentAutomation": true,
+    "requireHumanApprovalBeforeMerge": false
+  },
+  "ai": {
+    "autoImplement": true,
+    "heroSkills": true,
+    "review": true,
+    "commitMessageFromSkills": true
+  },
+  "git": {
+    "isolatedWorktree": true,
+    "pruneStaleWorktreesOnStart": true,
+    "syncUncommittedFromMain": true,
+    "pullMainBeforeRun": true,
+    "pullMainAfterPr": true,
+    "pullMainAfterMerge": true,
+    "resetMainCheckoutAfterMerge": true,
+    "alignMainWithRemoteAfterRun": true
+  },
+  "delivery": {
+    "autoCommit": true,
+    "autoPush": true,
+    "autoPr": true,
+    "autoMerge": true,
+    "mergeUseGhAuto": true
+  },
+  "quality": {
+    "gatesInWorktree": false,
+    "verifyMainBeforeRun": true,
+    "mainVerificationCommand": "npm run build"
+  },
+  "deploy": {
+    "localAfterMerge": false
+  },
+  "integrations": {
+    "cursor": {
+      "agentEditAutoPublish": false
+    }
+  }
 }

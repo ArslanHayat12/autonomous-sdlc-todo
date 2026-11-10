@@ -59,7 +59,7 @@ Edit **`sdlc.project.json`** — this is the only project-specific file you must
 - **`syncPathsFromMain`** — tests/config copied into the worktree
 - **`dast.checks`** — optional `curl` smoke URLs (disable with `"enabled": false`)
 
-Edit **`sdlc.features.json`** for automation toggles (merge, gates, worktrees).
+Edit **`sdlc.features.json`** (nested groups: `automation`, `ai`, `git`, `delivery`, `quality`, `deploy`, `integrations`) for toggles. Flat legacy keys still work.
 
 Policy defaults stay in **`orchestrator/sdlc.config.ts`** (shared across projects).
 

@@ -1,0 +1,26 @@
+{
+  "meta": {
+    "version": 1,
+    "description": "Where SDLC loads AI Hero SKILL.md files and catalog metadata."
+  },
+  "catalog": {
+    "file": "skills/hero-catalog.json",
+    "lockFile": "skills-lock.json",
+    "documentationUrl": "https://www.aihero.dev/skills"
+  },
+  "install": {
+    "npmScript": "skills:install",
+    "npxCommand": ["npx", "skills@latest", "add", "mattpocock/skills"],
+    "defaultTargetDirectory": ".agents/skills"
+  },
+  "loadPaths": {
+    "primary": ".agents/skills",
+    "localOverrides": "skills",
+    "description": "Local skills/<id>/ wins when the same id exists in both trees."
+  },
+  "selection": {
+    "maxSkillsPerRun": 8,
+    "llmRefinement": true,
+    "envDisableLlmPick": "SDLC_SKIP_LLM_SKILL_PICK"
+  }
+}

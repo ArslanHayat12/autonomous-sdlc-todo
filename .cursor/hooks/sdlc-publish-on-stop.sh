@@ -21,7 +21,7 @@ fi
 
 # Optional: require flag in sdlc.features.json (skip if jq missing)
 if command -v jq >/dev/null 2>&1 && [[ -f sdlc.features.json ]]; then
-  if [[ "$(jq -r '.agentEditAutoPublish // false' sdlc.features.json)" != "true" ]]; then
+  if [[ "$(jq -r '.integrations.cursor.agentEditAutoPublish // .agentEditAutoPublish // false' sdlc.features.json)" != "true" ]]; then
     exit 0
   fi
 fi
