@@ -7,7 +7,7 @@
   "pruneStaleWorktreesOnStart": true,
   "autoImplement": true,
   "aiHeroSkills": true,
-  "aiReview": false,
+  "aiReview": true,
   "qualityGates": false,
   "autoCommit": true,
   "autoPush": true,

@@ -10,21 +10,25 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/health', (_req, res) => {
+  res.setHeader('Content-Type', 'application/json');
   res.json({ ok: true });
 });
 
 app.get('/api/todos', (_req, res) => {
+  res.setHeader('Content-Type', 'application/json');
   res.json(store.list());
 });
 
 app.post('/api/todos', (req, res) => {
   const parsed = parseTitle(req.body?.title);
   if (!parsed.ok) {
-    res.status(400).json({ error: parsed.error });
+    res.status(400).setHeader('Content-Type', 'application/json');
+    res.json({ error: parsed.error });
     return;
   }
   const todo = store.create(parsed.title);
-  res.status(201).json(todo);
+  res.status(201).setHeader('Content-Type', 'application/json');
+  res.json(todo);
 });
 
 app.patch('/api/todos/:id', (req, res) => {
@@ -33,15 +37,18 @@ app.patch('/api/todos/:id', (req, res) => {
     title: typeof req.body?.title === 'string' ? req.body.title : undefined,
   });
   if (!todo) {
-    res.status(404).json({ error: 'Todo not found' });
+    res.status(404).setHeader('Content-Type', 'application/json');
+    res.json({ error: 'Todo not found' });
     return;
   }
+  res.setHeader('Content-Type', 'application/json');
   res.json(todo);
 });
 
 app.delete('/api/todos/:id', (req, res) => {
   if (!store.delete(req.params.id)) {
-    res.status(404).json({ error: 'Todo not found' });
+    res.status(404).setHeader('Content-Type', 'application/json');
+    res.json({ error: 'Todo not found' });
     return;
   }
   res.status(204).end();
