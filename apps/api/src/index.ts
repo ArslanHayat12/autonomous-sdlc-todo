@@ -35,9 +35,21 @@ app.patch('/api/todos/:id', (req, res) => {
     res.status(400).json({ error: 'Invalid todo id' });
     return;
   }
+
+  // Validate and parse title only when provided
+  let title: string | undefined;
+  if (typeof req.body?.title === 'string') {
+    const parsed = parseTitle(req.body.title);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    title = parsed.title;
+  }
+
   const todo = store.update(id, {
     completed: typeof req.body?.completed === 'boolean' ? req.body.completed : undefined,
-    title: typeof req.body?.title === 'string' ? req.body.title : undefined,
+    title,
   });
   if (!todo) {
     res.status(404).json({ error: 'Todo not found' });

@@ -1,5 +1,6 @@
 import type { ReviewFinding } from '../review-json.js';
-import type { SdlcConfig } from '../../sdlc.config.js';
+import type { SdlcConfigWithFeatures } from './feature-flags.js';
+import { reviewPrCommentsEnabled as reviewPrCommentsFlag } from './review-options.js';
 import {
   commentOnPullRequest,
   ghAvailable,
@@ -20,12 +21,6 @@ const SEVERITY_META: Record<
   medium: { heading: 'Medium', blocksMerge: false, icon: '⚠️' },
   low: { heading: 'Low', blocksMerge: false, icon: 'ℹ️' },
 };
-
-export function reviewPrCommentsEnabled(cfg: SdlcConfig): boolean {
-  if (process.env.SDLC_SKIP_PR_REVIEW_COMMENTS === '1') return false;
-  if (process.env.SDLC_PR_REVIEW_COMMENTS === '1') return true;
-  return cfg.github.prReviewComments !== false;
-}
 
 export function formatAiReviewPrComment(
   findings: ReviewFinding[],
@@ -99,7 +94,7 @@ function submitGhReviewVerdict(
 }
 
 export async function postAiReviewOnPullRequest(
-  cfg: SdlcConfig,
+  cfg: SdlcConfigWithFeatures,
   session: WorktreeSession,
   owner: string,
   repo: string,
@@ -107,7 +102,7 @@ export async function postAiReviewOnPullRequest(
   findings: ReviewFinding[],
   options: { skippedReason?: string; postInline?: boolean } = {},
 ): Promise<void> {
-  if (!reviewPrCommentsEnabled(cfg)) return;
+  if (!reviewPrCommentsFlag(cfg)) return;
 
   const body = formatAiReviewPrComment(findings, { skippedReason: options.skippedReason });
   commentOnPullRequest(session, owner, repo, prNumber, body);

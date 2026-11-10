@@ -29,6 +29,10 @@ export type SdlcFeatureFlags = {
   aiHeroSkills: boolean;
   /** AI code-review loop after PR creation (requires OPENAI_API_KEY). */
   aiReview: boolean;
+  /** Apply AI Hero review JSON patches and commit fixes (`autoCommit` must be true). */
+  aiReviewAutoFix: boolean;
+  /** Post severity-grouped + inline comments on the PR after review (`sdlc.features.json` / github config). */
+  aiReviewPrComments: boolean;
   /** Run build / audit / e2e / optional gates from sdlc.config.ts. */
   qualityGates: boolean;
   /** git commit task changes in the worktree. */
@@ -93,6 +97,8 @@ const defaultFlags: SdlcFeatureFlags = {
   autoImplement: true,
   aiHeroSkills: true,
   aiReview: true,
+  aiReviewAutoFix: true,
+  aiReviewPrComments: true,
   qualityGates: true,
   autoCommit: true,
   autoPush: true,
@@ -159,6 +165,8 @@ export function normalizeFeatureFlagsJson(parsed: Record<string, unknown>): Part
     if (coerceBool(ai.autoImplement) !== undefined) out.autoImplement = coerceBool(ai.autoImplement);
     if (coerceBool(ai.heroSkills) !== undefined) out.aiHeroSkills = coerceBool(ai.heroSkills);
     if (coerceBool(ai.review) !== undefined) out.aiReview = coerceBool(ai.review);
+    if (coerceBool(ai.reviewAutoFix) !== undefined) out.aiReviewAutoFix = coerceBool(ai.reviewAutoFix);
+    if (coerceBool(ai.reviewPrComments) !== undefined) out.aiReviewPrComments = coerceBool(ai.reviewPrComments);
     if (coerceBool(ai.commitMessageFromSkills) !== undefined) {
       out.autoCommitMessageFromSkills = coerceBool(ai.commitMessageFromSkills);
     }
@@ -260,9 +268,13 @@ export function applyFeatureFlagsToConfig(base: SdlcConfig, f: SdlcFeatureFlags)
       autoPr: true,
       autoMerge: true,
       requireHumanApprovalBeforeMerge: false,
+      aiReview: flags.aiReview !== false,
+      aiReviewAutoFix: flags.aiReviewAutoFix !== false,
+      aiReviewPrComments: flags.aiReviewPrComments !== false,
     };
   }
   c.features = flags;
+  c.github.prReviewComments = flags.aiReviewPrComments;
   c.git.worktreesEnabled = flags.isolatedWorktree;
   c.git.pruneStaleWorktreesOnStart = flags.pruneStaleWorktreesOnStart;
   c.git.autoStage = flags.autoCommit;
