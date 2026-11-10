@@ -39,6 +39,9 @@ export function loadDotEnv(repoRoot: string): void {
     ) {
       val = val.slice(1, -1);
     }
-    if (process.env[key] === undefined) process.env[key] = val;
+    const existing = process.env[key];
+    if (existing === undefined || (key === 'OPENAI_API_KEY' && existing.trim() === '')) {
+      process.env[key] = val;
+    }
   }
 }

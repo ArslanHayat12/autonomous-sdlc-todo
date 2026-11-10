@@ -1,3 +1,4 @@
+import './env-preload.js';
 import process from 'node:process';
 import { runSdlcFromArgv } from './sdlc/pipeline.js';
 

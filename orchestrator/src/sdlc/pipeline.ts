@@ -46,6 +46,7 @@ import { parseGitHubRepoFromUrl, resolveRemoteUrl } from '../gh-pr.js';
 import type { ReviewResult } from '../review-json.js';
 import type { SdlcConfigWithFeatures } from './feature-flags.js';
 import { resolveMonorepoRoot, resolvePrimarySyncSourceRoot } from './repo-root.js';
+import { bootstrapSdlcEnv, warnIfMissingOpenAiKey } from '../bootstrap-env.js';
 
 /** Set at each CLI/worker entry (honors `SDLC_REPO_ROOT`, `SDLC_PRIMARY_REPO_ROOT`). */
 let activeRepoRoot = resolveMonorepoRoot();
@@ -299,8 +300,14 @@ function runMainRepoVerificationIfEnabled(cfg: SdlcConfigWithFeatures): void {
   }
 }
 
-export async function runSdlcFromArgv(argv: string[]): Promise<void> {
+function bootstrapPipelineEnv(): void {
+  const repoRoot = bootstrapSdlcEnv();
   setPipelineRepoRoots(resolveMonorepoRoot(), resolvePrimarySyncSourceRoot());
+  warnIfMissingOpenAiKey(repoRoot);
+}
+
+export async function runSdlcFromArgv(argv: string[]): Promise<void> {
+  bootstrapPipelineEnv();
   const configMgr = new ConfigurationManager();
   const cfg = await configMgr.get(activeRepoRoot);
   const parsed = parseArgv(argv);
@@ -628,6 +635,12 @@ async function runFullPipeline(
   const aiPm = new AIProviderManager(cfg.ai);
   const client = aiPm.createClient();
   const model = aiPm.model();
+  step(
+    'openai',
+    client
+      ? `API key loaded (model ${model}) — AI implement/review enabled`
+      : 'OPENAI_API_KEY missing in process after loading repo .env — set it in .env or export it, then re-run npm run sdlc',
+  );
   const mergeMgr = new MergeManager(cfg);
   const prMgr = new PullRequestManager(cfg);
   const dockerMgr = new DockerManager(cfg.docker);
@@ -1348,6 +1361,7 @@ export async function runSdlcTask(
   repoRoot?: string,
   syncSourceRoot?: string,
 ): Promise<SdlcTaskOutcome> {
+  bootstrapPipelineEnv();
   if (repoRoot) setPipelineRepoRoots(repoRoot, syncSourceRoot);
   else setPipelineRepoRoots(resolveMonorepoRoot(), resolvePrimarySyncSourceRoot());
   const configMgr = new ConfigurationManager();

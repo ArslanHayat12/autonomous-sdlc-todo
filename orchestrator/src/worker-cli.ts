@@ -1,3 +1,4 @@
+import './env-preload.js';
 import process from 'node:process';
 import { runWorkerMain } from './sdlc/worker.js';
 
