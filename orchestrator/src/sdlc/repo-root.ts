@@ -1,5 +1,24 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+function looksLikeSdlcRepoRoot(dir: string): boolean {
+  return (
+    existsSync(path.join(dir, 'sdlc.features.json')) ||
+    (existsSync(path.join(dir, 'package.json')) && existsSync(path.join(dir, 'orchestrator')))
+  );
+}
+
+function walkUpForRepoRoot(start: string): string | null {
+  let dir = path.resolve(start);
+  while (true) {
+    if (looksLikeSdlcRepoRoot(dir)) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
 
 /**
  * Monorepo root (directory with root `package.json` / `sdlc.features.json`).
@@ -8,7 +27,14 @@ import { fileURLToPath } from 'node:url';
 export function resolveMonorepoRoot(): string {
   const env = process.env.SDLC_REPO_ROOT?.trim();
   if (env) return path.resolve(env);
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+
+  const fromModule = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+  if (looksLikeSdlcRepoRoot(fromModule)) return fromModule;
+
+  const fromCwd = walkUpForRepoRoot(process.cwd());
+  if (fromCwd) return fromCwd;
+
+  return fromModule;
 }
 
 /**

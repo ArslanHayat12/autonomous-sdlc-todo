@@ -40,6 +40,7 @@ import { parseGitHubRepoFromUrl, resolveRemoteUrl } from '../gh-pr.js';
 import type { ReviewResult } from '../review-json.js';
 import type { SdlcConfigWithFeatures } from './feature-flags.js';
 import { resolveMonorepoRoot, resolvePrimarySyncSourceRoot } from './repo-root.js';
+import { loadDotEnv, hasOpenAiKey } from '../load-env.js';
 
 /** Set at each CLI/worker entry (honors `SDLC_REPO_ROOT`, `SDLC_PRIMARY_REPO_ROOT`). */
 let activeRepoRoot = resolveMonorepoRoot();
@@ -283,7 +284,11 @@ function runMainRepoVerificationIfEnabled(cfg: SdlcConfigWithFeatures): void {
 }
 
 export async function runSdlcFromArgv(argv: string[]): Promise<void> {
-  setPipelineRepoRoots(resolveMonorepoRoot(), resolvePrimarySyncSourceRoot());
+  const repoRoot = resolveMonorepoRoot();
+  const syncRoot = resolvePrimarySyncSourceRoot();
+  loadDotEnv(repoRoot);
+  if (syncRoot !== repoRoot) loadDotEnv(syncRoot);
+  setPipelineRepoRoots(repoRoot, syncRoot);
   const configMgr = new ConfigurationManager();
   const cfg = await configMgr.get(activeRepoRoot);
   const parsed = parseArgv(argv);
@@ -611,6 +616,16 @@ async function runFullPipeline(
   const aiPm = new AIProviderManager(cfg.ai);
   const client = aiPm.createClient();
   const model = aiPm.model();
+  if (!hasOpenAiKey()) {
+    step(
+      'openai',
+      `No OPENAI_API_KEY in environment (expected in ${activeRepoRoot}/.env — loaded at CLI start).`,
+    );
+  } else if (!client) {
+    step('openai', 'OPENAI_API_KEY present but OpenAI client could not be created.');
+  } else {
+    step('openai', 'OpenAI client ready.');
+  }
   const mergeMgr = new MergeManager(cfg);
   const prMgr = new PullRequestManager(cfg);
   const dockerMgr = new DockerManager(cfg.docker);
@@ -1032,15 +1047,22 @@ async function runFullPipeline(
         step('github', 'PR description update skipped (no PR number).');
       }
     } else {
-      if (!client) {
-        reviewText = 'AI review skipped (OPENAI_API_KEY not set).';
-      } else if (!cfg.features.aiReview) {
-        reviewText = 'AI review skipped (sdlc.features.json aiReview: false).';
-      } else if (!cfg.aiHero.executionEnabled) {
-        reviewText = 'AI review skipped (AI Hero execution disabled in sdlc.config.ts or features).';
-      } else {
-        reviewText = 'AI review skipped.';
+      const skipReasons: string[] = [];
+      if (!hasOpenAiKey() || !client) {
+        skipReasons.push(
+          `**OPENAI_API_KEY** not available — add \`OPENAI_API_KEY=sk-…\` to \`${activeRepoRoot}/.env\` and re-run \`npm run sdlc\` (the CLI loads .env at startup).`,
+        );
       }
+      if (!cfg.features.aiReview) {
+        skipReasons.push('**sdlc.features.json**: set `"aiReview": true` to run the Hero code review loop.');
+      }
+      if (!cfg.aiHero.executionEnabled) {
+        skipReasons.push('AI Hero execution disabled (`aiHeroSkills: false` or policy in sdlc.config.ts).');
+      }
+      reviewText =
+        skipReasons.length > 0
+          ? `AI review skipped:\n${skipReasons.map(r => `- ${r}`).join('\n')}`
+          : 'AI review skipped.';
       progress.mark('review', 'skipped', reviewText.slice(0, 120));
       if (prNumber !== null) {
         await syncSdlcPrBody(prMgr, cfg, session, prNumber, {

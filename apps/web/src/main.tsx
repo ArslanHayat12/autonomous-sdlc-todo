@@ -8,6 +8,9 @@ if (!root) {
   throw new Error('Root element #root not found');
 }
 
+// Smoke test for AI review
+console.log('Smoke test: AI review hook works');
+
 createRoot(root).render(
   <StrictMode>
     <App />
