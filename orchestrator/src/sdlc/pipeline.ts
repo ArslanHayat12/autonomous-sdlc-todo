@@ -127,6 +127,17 @@ function blockingReviewFindings(r: ReviewResult): boolean {
   return r.findings.some(f => f.severity === 'critical' || f.severity === 'high');
 }
 
+function revertReviewPatches(session: WorktreeSession, patchPaths: string[]): void {
+  const paths = [...new Set(patchPaths.map(p => p.trim()).filter(Boolean))];
+  if (paths.length === 0) {
+    execGit(session.path, ['restore', '--source=HEAD', '--staged', '--worktree', '.'], true);
+    return;
+  }
+  for (const p of paths) {
+    execGit(session.path, ['checkout', 'HEAD', '--', p], true);
+  }
+}
+
 type PullMainWhen = 'beforeRun' | 'afterPr' | 'afterMerge';
 
 /**
@@ -987,12 +998,33 @@ async function runFullPipeline(
 
       if (!cfg.git.autoCommit) {
         step('ai review', 'Fix loop skipped (sdlc.features.json autoCommit: false); first-pass findings only.');
+      } else if (process.env.SDLC_SKIP_REVIEW_AUTO_FIX === '1') {
+        step('ai review', 'Auto-fix patches skipped (SDLC_SKIP_REVIEW_AUTO_FIX=1); findings only.');
       } else {
+        const buildCmd = cfg.project.commands.build.trim() || 'npm run build';
         while (iter < cfg.workflow.maxAiReviewIterations) {
+          const patchPaths = lastReview.patches?.map(p => p.path) ?? [];
           const applied = await fixer.applyPatchesIfAny(session, lastReview);
           if (applied) {
-            const b = testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], cfg.qualityGates.build.timeoutMs);
-            if (!b.ok) throw new Error(`Review fix broke build: ${b.output.slice(-1500)}`);
+            const b = testRunner.runShell(session.path, buildCmd, cfg.qualityGates.build.timeoutMs);
+            if (!b.ok) {
+              revertReviewPatches(session, patchPaths);
+              const tail = b.output.slice(-1200);
+              step(
+                'ai review',
+                `Auto-fix iteration ${iter + 1} reverted — build failed after review patches. See output below.`,
+              );
+              reviewText = [
+                reviewText,
+                '',
+                `_Auto-fix iteration ${iter + 1} was **reverted** because \`${buildCmd}\` failed._`,
+                '```',
+                tail,
+                '```',
+              ].join('\n');
+              lastReview = { ...lastReview, needsMoreChanges: false, patches: [] };
+              break;
+            }
             await gitCommitAll(
               session,
               `fix(sdlc): address review iteration ${iter + 1}`,
