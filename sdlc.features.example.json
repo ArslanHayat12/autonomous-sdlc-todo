@@ -11,6 +11,8 @@
     "autoImplement": true,
     "heroSkills": true,
     "review": true,
+    "reviewAutoFix": true,
+    "reviewPrComments": true,
     "commitMessageFromSkills": true
   },
   "git": {

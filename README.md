@@ -182,7 +182,9 @@ Copy or edit **`sdlc.features.json`** at the **repository root** (next to the ro
 | `pruneStaleWorktreesOnStart` | `true` | Remove stale linked worktrees under `.sdlc-worktrees/` before each run. |
 | `autoImplement` | `true` | OpenAI (or fallback) code edits. `false`: plan + gates only, no patch application. |
 | `aiHeroSkills` | `true` | Discover `skills/*/SKILL.md`, route into plan/review prompts. `false`: skip skill discovery. |
-| `aiReview` | `true` | Post-PR AI review loop. `false`: skip review and auto-fix iterations. |
+| `ai.review` | `true` | Post-PR AI Hero review loop. `false`: skip review. |
+| `ai.reviewAutoFix` | `true` | Apply review JSON patches, commit, and push (needs `autoCommit`). `false`: findings only. |
+| `ai.reviewPrComments` | `true` | Post severity-grouped + inline GitHub PR comments after review. |
 | `qualityGates` | `true` | Run gates from `sdlc.config.ts`. `false`: gates skipped (**`--publish`** uses this too; mandatory **skipped** does not block auto-merge). |
 | `autoCommit` | `true` | Commit changes in the session. |
 | `autoPush` | `true` | Push the feature branch (`false` also disables PR creation; `gh pr create` needs a pushed branch). |

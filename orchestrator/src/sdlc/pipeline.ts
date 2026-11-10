@@ -32,6 +32,7 @@ import { PipelineProgress } from './pipeline-progress.js';
 import { buildSdlcPrBody } from './pr-body-builder.js';
 import { syncSdlcPrBody } from './sdlc-pr-sync.js';
 import { postAiReviewOnPullRequest } from './review-pr-comments.js';
+import { reviewAutoFixEnabled, reviewPrCommentsEnabled } from './review-options.js';
 import { notifySdlcFailure } from './sdlc-notify.js';
 import { buildFeatureBranchName } from './feature-branch-name.js';
 import {
@@ -1042,8 +1043,11 @@ async function runFullPipeline(
 
       if (!cfg.git.autoCommit) {
         step('ai review', 'Fix loop skipped (sdlc.features.json autoCommit: false); first-pass findings only.');
-      } else if (process.env.SDLC_SKIP_REVIEW_AUTO_FIX === '1') {
-        step('ai review', 'Auto-fix patches skipped (SDLC_SKIP_REVIEW_AUTO_FIX=1); findings only.');
+      } else if (!reviewAutoFixEnabled(cfg)) {
+        step(
+          'ai review',
+          'Auto-fix skipped (sdlc.features.json ai.reviewAutoFix: false or SDLC_SKIP_REVIEW_AUTO_FIX=1); comments only.',
+        );
       } else {
         const buildCmd = cfg.project.commands.build.trim() || 'npm run build';
         while (iter < cfg.workflow.maxAiReviewIterations) {
@@ -1118,6 +1122,13 @@ async function runFullPipeline(
         );
       } else {
         step('github', 'PR description update skipped (no PR number).');
+      }
+      if (prNumber !== null) {
+        if (reviewPrCommentsEnabled(cfg)) {
+          step('ai review', 'Posting PR review comments (severity + inline when possible)…');
+        } else {
+          step('ai review', 'PR review comments skipped (sdlc.features.json ai.reviewPrComments: false).');
+        }
       }
       const reviewRepo = prMgr.resolveOwnerRepo(session);
       if (prNumber !== null && reviewRepo) {
