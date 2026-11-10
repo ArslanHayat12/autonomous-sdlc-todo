@@ -21,6 +21,20 @@ export function applyOpenAiKeyNormalization(): void {
   else if (process.env.OPENAI_API_KEY?.trim() === '') delete process.env.OPENAI_API_KEY;
 }
 
+/** Blank `GITHUB_OWNER` / `GITHUB_REPO` in `.env` must not block parsing `origin`. */
+export function applyGitHubEnvNormalization(): void {
+  for (const key of ['GITHUB_OWNER', 'GITHUB_REPO'] as const) {
+    if (process.env[key]?.trim() === '') delete process.env[key];
+  }
+  const token = process.env.GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim();
+  if (token) {
+    process.env.GH_TOKEN = token;
+    process.env.GITHUB_TOKEN = token;
+  } else if (process.env.GITHUB_TOKEN?.trim() === '') {
+    delete process.env.GITHUB_TOKEN;
+  }
+}
+
 /** Load repo-root `.env` into `process.env` (does not override existing env vars). */
 export function loadDotEnv(repoRoot: string): void {
   const file = path.join(repoRoot, '.env');

@@ -19,9 +19,21 @@ export function ghAvailable(): boolean {
 }
 
 export function resolveRemoteUrl(session: WorktreeSession): string | null {
-  const out = execGit(session.path, ['remote', 'get-url', 'origin'], true).trim();
-  if (out.startsWith('__GIT_FAIL__') || !out) return null;
-  return out;
+  for (const cwd of [session.path, session.mainRepoRoot]) {
+    const out = execGit(cwd, ['remote', 'get-url', 'origin'], true).trim();
+    if (!out.startsWith('__GIT_FAIL__') && out) return out;
+  }
+  return null;
+}
+
+/** Resolve owner/repo for `gh` — ignores blank GITHUB_OWNER/GITHUB_REPO; falls back to origin URL. */
+export function resolveGitHubRepo(session: WorktreeSession): { owner: string; repo: string } | null {
+  const envOwner = process.env.GITHUB_OWNER?.trim();
+  const envRepo = process.env.GITHUB_REPO?.trim();
+  if (envOwner && envRepo) return { owner: envOwner, repo: envRepo };
+  const remote = resolveRemoteUrl(session);
+  if (!remote) return null;
+  return parseGitHubRepoFromUrl(remote);
 }
 
 function writeBodyTemp(body: string): string {
@@ -78,12 +90,9 @@ export async function pushAndOpenPr(
   body: string,
   labels: string[] = [],
 ): Promise<{ prUrl: string | null; message: string; prNumber: number | null }> {
-  const envOwner = process.env.GITHUB_OWNER;
-  const envRepo = process.env.GITHUB_REPO;
-  const remote = resolveRemoteUrl(session);
-  const parsed = remote ? parseGitHubRepoFromUrl(remote) : null;
-  const owner = envOwner ?? parsed?.owner;
-  const repo = envRepo ?? parsed?.repo;
+  const ids = resolveGitHubRepo(session);
+  const owner = ids?.owner;
+  const repo = ids?.repo;
 
   try {
     execGit(session.path, ['push', '-u', 'origin', session.branch]);
@@ -105,9 +114,10 @@ export async function pushAndOpenPr(
   }
 
   if (!owner || !repo) {
+    const remote = resolveRemoteUrl(session) ?? '(no origin remote)';
     return {
       prUrl: null,
-      message: 'Set GITHUB_OWNER and GITHUB_REPO or use a github.com origin URL so gh can open a PR.',
+      message: `Could not resolve GitHub repo from origin (${remote}). Set GITHUB_OWNER + GITHUB_REPO in .env or fix git remote. Remove blank GITHUB_OWNER= lines that override origin.`,
       prNumber: null,
     };
   }
@@ -165,14 +175,37 @@ export async function pushAndOpenPr(
   }
 
   if (create.startsWith('__CMD_FAIL__')) {
-    const view = execCmd(session.path, 'gh', ['pr', 'view', '--repo', `${owner}/${repo}`, '--json', 'url', '-q', '.url'], true).trim();
-    if (!view.startsWith('__CMD_FAIL__') && view.startsWith('http')) {
-      const num = parsePrNumber(
-        execCmd(session.path, 'gh', ['pr', 'view', '--repo', `${owner}/${repo}`, '--json', 'number', '-q', '.number'], true).trim(),
-      );
-      return { prUrl: view, message: 'PR already exists; returning existing URL.', prNumber: num };
+    const byHead = execCmd(
+      session.path,
+      'gh',
+      [
+        'pr',
+        'list',
+        '--repo',
+        `${owner}/${repo}`,
+        '--head',
+        `${owner}:${session.branch}`,
+        '--json',
+        'number,url',
+        '-q',
+        '.[0]',
+      ],
+      true,
+    ).trim();
+    if (!byHead.startsWith('__CMD_FAIL__') && byHead.startsWith('{')) {
+      try {
+        const row = JSON.parse(byHead) as { number?: number; url?: string };
+        if (row.url && row.number) {
+          return { prUrl: row.url, message: 'PR already exists for branch; returning existing URL.', prNumber: row.number };
+        }
+      } catch {
+        /* fall through */
+      }
     }
-    return { prUrl: null, message: create, prNumber: null };
+    const authHint = /auth|401|403|token/i.test(create)
+      ? ' Run `gh auth login` or set GITHUB_TOKEN=ghp_… in .env (repo scope).'
+      : '';
+    return { prUrl: null, message: `${create}${authHint}`, prNumber: null };
   }
 
   const url = create.trim().split(/\r?\n/)[0] ?? create.trim();
@@ -325,21 +358,31 @@ export function commentOnPullRequest(
   return !out.startsWith('__CMD_FAIL__');
 }
 
-export async function updatePrDescription(session: WorktreeSession, body: string): Promise<string | null> {
+export async function updatePrDescription(
+  session: WorktreeSession,
+  body: string,
+  branch?: string,
+): Promise<string | null> {
   if (!ghAvailable()) return null;
-  const remote = resolveRemoteUrl(session);
-  const parsed = remote ? parseGitHubRepoFromUrl(remote) : null;
-  const owner = process.env.GITHUB_OWNER ?? parsed?.owner;
-  const repo = process.env.GITHUB_REPO ?? parsed?.repo;
-  if (!owner || !repo) return null;
+  const ids = resolveGitHubRepo(session);
+  if (!ids) return null;
+  const { owner, repo } = ids;
   const bodyFile = writeBodyTemp(body);
   let out: string;
   try {
-    out = execCmd(session.path, 'gh', ['pr', 'edit', '--repo', `${owner}/${repo}`, '--body-file', bodyFile], true);
+    out = execCmd(
+      session.path,
+      'gh',
+      ['pr', 'edit', '--repo', `${owner}/${repo}`, '--body-file', bodyFile],
+      true,
+    );
   } finally {
     unlinkBodyTemp(bodyFile);
   }
   if (out.startsWith('__CMD_FAIL__')) return null;
-  const url = execCmd(session.path, 'gh', ['pr', 'view', '--repo', `${owner}/${repo}`, '--json', 'url', '-q', '.url'], true).trim();
+  const viewArgs = branch
+    ? ['pr', 'view', '--repo', `${owner}/${repo}`, '--head', `${owner}:${branch}`, '--json', 'url', '-q', '.url']
+    : ['pr', 'view', '--repo', `${owner}/${repo}`, '--json', 'url', '-q', '.url'];
+  const url = execCmd(session.path, 'gh', viewArgs, true).trim();
   return url.startsWith('http') ? url : null;
 }
