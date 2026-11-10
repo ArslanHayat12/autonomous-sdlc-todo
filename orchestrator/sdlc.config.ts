@@ -111,6 +111,8 @@ export type GitHubConfig = {
   prPipelineChecklist: boolean;
   /** Post a short PR comment when a pipeline step succeeds (can be noisy — default false) */
   prStepComments: boolean;
+  /** After AI Hero review, post severity-grouped PR comments (and inline on changed lines when possible) */
+  prReviewComments: boolean;
   /** Write `.sdlc/last-error.json` and comment on the PR when the run fails */
   notifyOnFailure: boolean;
   /** gh pr merge --admin is NEVER used */
@@ -268,6 +270,7 @@ export const sdlcConfig: SdlcConfig = {
     autoLabel: true,
     prPipelineChecklist: true,
     prStepComments: false,
+    prReviewComments: true,
     notifyOnFailure: true,
     respectBranchProtection: true,
   },
