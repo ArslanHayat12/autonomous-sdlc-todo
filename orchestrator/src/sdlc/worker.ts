@@ -27,9 +27,10 @@ import {
 import type { WorktreeSession } from '../worktree.js';
 import type { SdlcConfigWithFeatures } from './feature-flags.js';
 import { existsSync } from 'node:fs';
+import { logSection, logWorkerBullet, type LogTone } from './sdlc-log.js';
 
-function log(msg: string) {
-  console.log(`[${new Date().toISOString()}] worker: ${msg}`);
+function log(msg: string, tone: LogTone = 'info') {
+  logWorkerBullet(msg, tone);
 }
 
 function minimalSession(repoRoot: string): WorktreeSession {
@@ -129,7 +130,8 @@ export async function runWorkerMain(argv: string[]): Promise<void> {
   }
   await saveWorkerState(stateAbs, state);
 
-  log(`Started (repo=${workerRepo}${syncPrimary ? `, syncFrom=${syncPrimary}` : ''})`);
+  logSection('SDLC worker');
+  log(`Started (repo=${workerRepo}${syncPrimary ? `, syncFrom=${syncPrimary}` : ''})`, 'ok');
 
   while (running) {
     if (existsSync(shutdownAbs)) {
@@ -181,7 +183,7 @@ export async function runWorkerMain(argv: string[]): Promise<void> {
       outcome = await runSdlcTask(instruction, workerRepo, syncPrimary);
       if (outcome.ok) break;
       lastErr = outcome.blockedReason ?? outcome.mergeStatus ?? 'task failed';
-      log(`Task not OK (${attempt}/${maxAttempts}): ${lastErr.slice(0, 500)}`);
+      log(`Task not OK (${attempt}/${maxAttempts}): ${lastErr.slice(0, 500)}`, 'error');
       if (attempt >= maxAttempts) {
         if (next.kind === 'local') {
           await patchLocalTaskStatus(workerRepo, cfg, next.task.id, 'failed', lastErr);

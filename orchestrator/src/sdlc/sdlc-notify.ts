@@ -3,6 +3,7 @@ import path from 'node:path';
 import { commentOnPullRequest } from '../gh-pr.js';
 import type { WorktreeSession } from '../worktree.js';
 import type { PipelineProgress } from './pipeline-progress.js';
+import { logErrorBlock } from './sdlc-log.js';
 
 export type LastErrorRecord = {
   version: 1;
@@ -73,9 +74,9 @@ export async function notifySdlcFailure(options: {
     `_Diagnostics written to \`${path.relative(options.repoRoot, errFile)}\`._`,
   ].join('\n');
 
-  console.error(`\n[SDLC ERROR] ${options.error.slice(0, 500)}`);
-  console.error(`  Details: ${errFile}`);
-  if (options.prUrl) console.error(`  PR: ${options.prUrl}`);
+  const errLines = [options.error.slice(0, 500), `Details: ${errFile}`];
+  if (options.prUrl) errLines.push(`PR: ${options.prUrl}`);
+  logErrorBlock('SDLC run failed', errLines);
 
   if (
     options.session &&

@@ -118,6 +118,8 @@ Environment overrides:
 | `SDLC_PR_STEP_COMMENTS` | `1` posts a PR comment after each successful pipeline step (off by default) |
 | `SDLC_SKIP_PR_ERROR_COMMENT` | `1` skips the failure comment on the PR |
 | `SDLC_NOTIFY_ON_ERROR` | `0` skips writing `.sdlc/last-error.json` and PR failure comments |
+| `SDLC_NO_COLOR` / `NO_COLOR` | `1` disables colored bullet logs (plain `•` only) |
+| `SDLC_FORCE_COLOR` | `1` forces colors when stdout is not a TTY (e.g. some CI logs) |
 
 ## What `npm run sdlc` does
 

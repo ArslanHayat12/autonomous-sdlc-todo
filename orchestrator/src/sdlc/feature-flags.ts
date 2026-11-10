@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sdlcConfig, type SdlcConfig } from '../../sdlc.config.js';
+import { applyProjectProfile, loadProjectProfile, type SdlcProjectProfile } from './project-profile.js';
 
 /**
  * Toggle file (JSON) at repository root — edit this to enable/disable SDLC automation
@@ -123,7 +124,7 @@ export async function loadFeatureFlags(repoRoot: string): Promise<SdlcFeatureFla
 /**
  * Apply feature toggles to a copy of `sdlcConfig` so `sdlc.config.ts` stays the structural default.
  */
-export type SdlcConfigWithFeatures = SdlcConfig & { features: SdlcFeatureFlags };
+export type SdlcConfigWithFeatures = SdlcConfig & { features: SdlcFeatureFlags; project: SdlcProjectProfile };
 
 export function applyFeatureFlagsToConfig(base: SdlcConfig, f: SdlcFeatureFlags): SdlcConfigWithFeatures {
   const c = deepClone(base) as SdlcConfigWithFeatures;
@@ -166,5 +167,9 @@ export function applyFeatureFlagsToConfig(base: SdlcConfig, f: SdlcFeatureFlags)
 /** For dry-run / tests: resolve repo root from orchestrator package location. */
 export async function loadMergedConfigFromRepoRoot(repoRoot: string): Promise<SdlcConfigWithFeatures> {
   const flags = await loadFeatureFlags(repoRoot);
-  return applyFeatureFlagsToConfig(sdlcConfig, flags);
+  const project = await loadProjectProfile(repoRoot);
+  const withProject = applyProjectProfile(sdlcConfig, project);
+  const merged = applyFeatureFlagsToConfig(withProject, flags);
+  merged.project = project;
+  return merged;
 }
