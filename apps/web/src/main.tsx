@@ -20,10 +20,17 @@ function App() {
   }, []);
   React.useEffect(() => { void load(); }, [load]);
   async function addTodo(event: React.FormEvent) {
-    event.preventDefault(); setError('');
-    const response = await fetch(`${API}/api/todos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) });
+    event.preventDefault();
+    setError('');
+    const trimmedTitle = title.trim().slice(0, 160);
+    if (!trimmedTitle) {
+      setError('Title is required');
+      return;
+    }
+    const response = await fetch(`${API}/api/todos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: trimmedTitle }) });
     if (!response.ok) { setError((await response.json()).error ?? 'Could not add task'); return; }
-    setTitle(''); await load();
+    setTitle('');
+    await load();
   }
   console.log('[FocusTodo] API base URL:', API);
   async function toggle(todo: Todo) { await fetch(`${API}/api/todos/${todo.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ completed: !todo.completed }) }); await load(); }

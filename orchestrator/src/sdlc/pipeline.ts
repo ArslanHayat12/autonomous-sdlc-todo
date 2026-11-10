@@ -611,6 +611,14 @@ async function runFullPipeline(
   const aiPm = new AIProviderManager(cfg.ai);
   const client = aiPm.createClient();
   const model = aiPm.model();
+  if (!client) {
+    step(
+      'openai',
+      'No OPENAI_API_KEY — add to repo root `.env` (loaded at CLI start) or `export OPENAI_API_KEY=…`. AI implement/review disabled.',
+    );
+  } else {
+    step('openai', 'OpenAI client ready (key from env/.env).');
+  }
   const mergeMgr = new MergeManager(cfg);
   const prMgr = new PullRequestManager(cfg);
   const dockerMgr = new DockerManager(cfg.docker);
@@ -1032,15 +1040,22 @@ async function runFullPipeline(
         step('github', 'PR description update skipped (no PR number).');
       }
     } else {
+      const skipReasons: string[] = [];
       if (!client) {
-        reviewText = 'AI review skipped (OPENAI_API_KEY not set).';
-      } else if (!cfg.features.aiReview) {
-        reviewText = 'AI review skipped (sdlc.features.json aiReview: false).';
-      } else if (!cfg.aiHero.executionEnabled) {
-        reviewText = 'AI review skipped (AI Hero execution disabled in sdlc.config.ts or features).';
-      } else {
-        reviewText = 'AI review skipped.';
+        skipReasons.push(
+          '`OPENAI_API_KEY` missing — set in repo root `.env` (one line: `OPENAI_API_KEY=sk-…`, no quotes) and re-run; CLI loads `.env` on start.',
+        );
       }
+      if (!cfg.features.aiReview) {
+        skipReasons.push('`sdlc.features.json` has **`aiReview`: false** — set to **`true`** to run the review loop.');
+      }
+      if (!cfg.aiHero.executionEnabled) {
+        skipReasons.push('AI Hero execution disabled (`aiHeroSkills: false` or `sdlc.config.ts`).');
+      }
+      reviewText =
+        skipReasons.length > 0
+          ? `AI review skipped:\n${skipReasons.map(r => `- ${r}`).join('\n')}`
+          : 'AI review skipped.';
       progress.mark('review', 'skipped', reviewText.slice(0, 120));
       if (prNumber !== null) {
         await syncSdlcPrBody(prMgr, cfg, session, prNumber, {
