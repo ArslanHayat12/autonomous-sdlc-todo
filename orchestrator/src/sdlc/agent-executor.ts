@@ -11,7 +11,7 @@ export class AgentExecutor {
 
   async implement(
     instruction: string,
-    ctx: { paths: string[]; repoRoot: string },
+    ctx: { paths: string[]; repoRoot: string; buildFeedback?: string },
   ): Promise<{ patches: import('../patch.js').FilePatch[]; summary: string }> {
     const parts: string[] = [];
     for (const p of ctx.paths) {
@@ -21,9 +21,14 @@ export class AgentExecutor {
     }
     const system = `You implement repository changes. Output ONLY valid JSON with shape:
 {"summary":"short","patches":[{"path":"relative/path.ts","content":"full new file content"}]}
-Paths must be repo-relative forward slashes.`;
+Paths must be repo-relative forward slashes.
+Patches MUST keep \`npm run build\` passing (strict TypeScript). For Express 5, \`req.params.*\` is \`string | string[]\` — use \`routeParam\` from apps/api/src/route-params.ts when touching API routes. After \`parseTitle\`, narrow with \`if (!parsed.ok) return\` then destructure \`const { title } = parsed\`.`;
 
-    const user = `${system}\n\nInstruction:\n${instruction}\n\nFiles:\n${parts.join('\n\n')}`;
+    const buildBlock = ctx.buildFeedback?.trim()
+      ? `\n\nPrevious build FAILED — fix these errors in your patches:\n\`\`\`\n${ctx.buildFeedback.slice(-4000)}\n\`\`\`\n`
+      : '';
+
+    const user = `${system}\n\nInstruction:\n${instruction}${buildBlock}\n\nFiles:\n${parts.join('\n\n')}`;
     const r = await this.client.responses.create({ model: this.model, input: user });
     const text = r.output_text ?? '';
     const data = extractJsonObject(text);

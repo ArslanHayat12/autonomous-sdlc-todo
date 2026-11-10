@@ -39,7 +39,7 @@ import {
   resolvePrCommitSkillRecords,
   type PrCommitSkillRecord,
 } from './commit-skills-log.js';
-import { resolveReviewPaths } from './project-profile.js';
+import { resolveImplementationPaths, resolveReviewPaths } from './project-profile.js';
 import { formatStepBullet, logRunSummary, logSection, logErrorBlock } from './sdlc-log.js';
 import type { ExecutionReport, GateResult, SkillInvocation, WorkflowState } from './types.js';
 import { parseGitHubRepoFromUrl, resolveRemoteUrl } from '../gh-pr.js';
@@ -770,13 +770,19 @@ async function runFullPipeline(
       progress.mark('implement', 'skipped', 'autoImplement false');
     } else {
       let implAttempt = 0;
+      let lastBuildOutput = '';
       while (implAttempt < cfg.workflow.maxImplementationRetries) {
         implAttempt++;
         if (client) {
           const agent = new AgentExecutor(client, model);
+          const implPaths = resolveImplementationPaths(cfg.project);
+          const withRouteHelper = implPaths.includes('apps/api/src/route-params.ts')
+            ? implPaths
+            : [...implPaths, 'apps/api/src/route-params.ts'];
           const r = await agent.implement(instruction, {
-            paths: ['apps/web/src/main.tsx', 'apps/api/src/index.ts'],
+            paths: [...new Set(withRouteHelper)],
             repoRoot: session.path,
+            buildFeedback: implAttempt > 1 ? lastBuildOutput : undefined,
           });
           await agent.apply(session.path, r.patches);
           implementationSummary = r.summary;
@@ -791,6 +797,7 @@ async function runFullPipeline(
           }
         }
         const buildTry = testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], cfg.qualityGates.build.timeoutMs);
+        lastBuildOutput = buildTry.output;
         if (buildTry.ok) break;
         if (implAttempt >= cfg.workflow.maxImplementationRetries) {
           progress.mark('implement', 'failed', `build failed after ${implAttempt} attempts`);

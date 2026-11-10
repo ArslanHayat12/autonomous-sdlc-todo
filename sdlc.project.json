@@ -8,7 +8,9 @@
     "implementation": [
       "apps/web/src/main.tsx",
       "apps/web/src/App.tsx",
-      "apps/api/src/index.ts"
+      "apps/api/src/index.ts",
+      "apps/api/src/route-params.ts",
+      "apps/api/src/validation.ts"
     ],
     "review": [
       "apps/web/src/App.tsx",
