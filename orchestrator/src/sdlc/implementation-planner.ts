@@ -8,7 +8,12 @@ export class ImplementationPlanner {
     private model: string,
   ) {}
 
-  async plan(instruction: string, skills: HeroSkill[], manifestPath: string): Promise<string> {
+  async plan(
+    instruction: string,
+    skills: HeroSkill[],
+    manifestPath: string,
+    manifestMaxChars = 4_000,
+  ): Promise<string> {
     let manifest = '';
     try {
       manifest = await readFile(manifestPath, 'utf8');
@@ -32,7 +37,7 @@ Instruction: ${instruction}
 Skills to align with: ${skillList}
 
 package.json excerpt:
-${manifest.slice(0, 4000)}
+${manifest.slice(0, Math.max(500, manifestMaxChars))}
 `;
     const r = await this.client.responses.create({ model: this.model, input: prompt });
     return r.output_text?.trim() ?? 'No plan text.';

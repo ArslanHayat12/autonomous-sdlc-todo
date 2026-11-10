@@ -5,10 +5,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "sdlc": "tsx src/cli.ts",
+    "sdlc:check-env": "tsx src/check-env.ts",
     "sdlc:worker": "tsx src/worker-cli.ts start",
     "sdlc:worker-status": "tsx src/worker-cli.ts status",
     "sdlc:worker-stop": "tsx src/worker-cli.ts stop",
-    "test": "node --import tsx/esm --test src/worktree.test.ts src/sdlc/pipeline-progress.test.ts src/sdlc/feature-branch-name.test.ts src/sdlc/sdlc-log.test.ts src/sdlc/feature-flags.test.ts src/sdlc/review-pr-comments.test.ts src/sdlc/review-options.test.ts"
+    "test": "node --import tsx/esm --test src/worktree.test.ts src/sdlc/pipeline-progress.test.ts src/sdlc/feature-branch-name.test.ts src/sdlc/sdlc-log.test.ts src/sdlc/feature-flags.test.ts src/sdlc/review-pr-comments.test.ts src/sdlc/review-options.test.ts src/sdlc/prompt-budget.test.ts"
   },
   "dependencies": { "openai": "^5.20.0" },
   "devDependencies": { "tsx": "^4.20.6", "@types/node": "^24.7.2" }

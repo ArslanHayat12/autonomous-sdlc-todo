@@ -1,227 +1,297 @@
-# Autonomous SDLC Todo — autonomous pipeline starter
+# Autonomous SDLC Todo
 
-A React + TypeScript Todo app, Express API, Docker Compose, Playwright E2E, and a **config-driven** SDLC orchestrator under `orchestrator/`.
+A small **Todo app** plus an **automation pipeline** that can plan changes, edit code, test, open a GitHub PR, review, comment, fix, and merge — mostly without hand-holding.
 
-## Architecture (audit summary)
+Good for learning how “agent + git + CI-style gates” fit together, or as a starter you copy into your own repo.
 
-| Area | Role |
-|------|------|
-| `apps/web` | Vite + React UI |
-| `apps/api` | Express JSON API |
-| `orchestrator/` | Autonomous SDLC CLI — worktree isolation, OpenAI, `gh` PR/merge, optional Docker, **continuous worker** |
-| `orchestrator/sdlc.config.ts` | **Single policy file** for AI, quality gates, Git, GitHub, Docker, workflow limits |
-| `sdlc.features.json` | **Feature toggles** (optional JSON at repo root) — turn off worktrees, PR, merge, deploy, Hero skills, etc. without editing TypeScript |
-| `skills/` | Local **AI Hero–style** `SKILL.md` files (install more via `SDLC_INSTALL_AIHERO_SKILLS=1` → `npx skills@latest add mattpocock/skills`) |
-| `docker-compose.yml` | Local API + dev web for Docker workflow |
+---
 
-The orchestrator runs in **Node**, not inside Cursor: it **injects** `SKILL.md` content into OpenAI prompts. It does **not** invoke Cursor’s in-IDE skill runtime. Optional `npx skills@latest add` pulls the official catalog when you opt in.
+## What you get
 
-### Continuous worker (`npm run sdlc:worker`)
+| Piece | Folder | Purpose |
+|--------|--------|---------|
+| Web UI | `apps/web` | React + Vite todo list |
+| API | `apps/api` | Express REST API |
+| SDLC bot | `orchestrator/` | CLI that runs the full pipeline |
+| Skills | `skills/` | Extra instructions for AI plan/review (`SKILL.md` per topic) |
+| E2E tests | `tests/` | Playwright happy-path test |
+| Docker | `docker-compose.yml` | Optional local API + web in containers |
 
-Polls **GitHub issues** (label from `taskSources.githubIssueLabels` in `orchestrator/sdlc.config.ts`) and the **local queue** [`tasks/queue.json`](tasks/queue.json), then runs the same full SDLC pipeline as `npm run sdlc` for each task.
+---
 
-| Command | Purpose |
-|---------|---------|
-| `npm run sdlc:worker` | Start worker (blocks; SIGINT/SIGTERM graceful stop) |
-| `npm run sdlc:status` | Print worker state (`.sdlc/worker-state.json`) |
-| `npm run sdlc:stop` | Create `.sdlc/WORKER_SHUTDOWN` so the worker exits cleanly |
+## Pros and cons
 
-**Dirty main checkout:** Either run the worker from a **second clone** and set **`SDLC_REPO_ROOT`** to that path, **or** set **`SDLC_WORKER_SYNC_FROM_PRIMARY=1`** and **`SDLC_PRIMARY_REPO_ROOT=/path/to/cursor/workspace`** so uncommitted files copy into each task worktree (never touches your dirty tree with reset/clean).
+### Pros
 
-**GitHub tasks:** open issues with the configured label (default **`sdlc`**) are picked up, then **commented + closed** only when the run **`outcome.ok`** (merged and deploy OK if enabled). If merge is blocked by branch protection, the issue is **skipped** for the rest of the run (tracked in worker state); resolve on GitHub and clear **`.sdlc/worker-state.json`** or restart with a fresh state.
+- **Safe git model** — By default work happens in a **linked worktree** (`.sdlc-worktrees/`), so your dirty `main` checkout is not touched.
+- **One command** — `npm run sdlc -- "your task"` → plan, implement, test, commit, PR, AI review, optional merge.
+- **Feature toggles** — Turn steps on/off in **`sdlc.features.json`** without editing TypeScript.
+- **Skills** — Drop `skills/<name>/SKILL.md` files; the orchestrator injects them into OpenAI plan/review prompts.
+- **Tests before commit** — Build + Playwright E2E when `quality.gatesInWorktree` is `true`; optional Husky pre-commit hook.
+- **PR transparency** — Live PR checklist, AI review comments (critical/high/medium/low), optional auto-fix commits.
+- **Worker mode** — `npm run sdlc:worker` can drain GitHub issues or `tasks/queue.json`.
 
-**Local tasks:** append to **`tasks/queue.json`** (`version: 1`, `tasks[]` with `status: "pending"` and `instruction`) — no worker restart required.
+### Cons
 
-**Honest limits:** “Invoke skills through Cursor” is **not** implemented; skills are **read from `skills/*/SKILL.md`** and injected into OpenAI prompts. Full **resume** of an interrupted pipeline is still partial (`--resume` stub). Splitting `pipeline.ts` into the full module list you named is a further refactor.
+- **Needs OpenAI + GitHub** — Real automation expects `OPENAI_API_KEY` in `.env` and `gh auth login` (or `GITHUB_TOKEN`).
+- **Merge is not magic** — Branch protection, required reviews, and failing CI on GitHub can still block `gh pr merge` (by design; no `--admin` bypass).
+- **Skills ≠ Cursor runtime** — Skills are **text files on disk**, not Cursor’s in-IDE skill execution.
+- **Resume is limited** — `--resume` is mostly a stub; interrupted runs are not fully continued yet.
+- **Can be slow** — Playwright + Docker gates + multiple OpenAI calls = several minutes per run.
+- **`alignMainWithRemoteAfterRun`** — If enabled, a hard reset to `origin/main` after each run **wipes uncommitted local changes** on `main` (turn off while iterating).
 
-## Requirements
+---
 
-- Node.js 22+, npm 10+, Git  
-- `gh` + `gh auth login` for PR / merge automation  
-- `OPENAI_API_KEY` for real AI implementation + review loops  
-- Docker Desktop for compose build / local deploy steps  
+## Tech stack
 
-## One-command SDLC
+| Layer | Libraries / tools |
+|--------|-------------------|
+| Frontend | React, Vite, TypeScript |
+| API | Express 5, TypeScript, CORS |
+| Orchestrator | Node 22+, TypeScript, OpenAI SDK |
+| Tests | Playwright (`@playwright/test`) |
+| Monorepo | npm workspaces |
+| Git / GitHub | `git`, `gh` CLI |
+| Optional | Docker Compose, Husky (pre-commit) |
+| Editor integration | Cursor MCP (`.cursor/mcp.json` — GitHub, Figma, Playwright MCP) |
+
+---
+
+## Quick start (new teammate)
+
+### 1. Install
 
 ```bash
+git clone <your-repo-url>
+cd autonomous-sdlc-todo
 npm install
 cp .env.example .env
-# export OPENAI_API_KEY=...
-npm run sdlc -- "Add authentication to Todo"
 ```
 
-### Hands-off run (no instruction on the command line)
+### 2. Configure `.env`
 
-For **automation** (cron, CI, desktop shortcut), put the task in **`SDLC_INSTRUCTION`** in `.env` and run:
+| Variable | Required? | Notes |
+|----------|-----------|--------|
+| `OPENAI_API_KEY` | Yes for AI | Put key in `.env`; blank shell is OK — verify with `npm run sdlc:check-env` |
+| `OPENAI_MODEL` | No | Default `gpt-4.1-mini` in example |
+| `GITHUB_TOKEN` | For `gh` | Classic PAT with `repo` scope; or run `gh auth login` |
+| `GITHUB_OWNER` / `GITHUB_REPO` | No | **Leave blank** to use `git remote`; empty lines break PR create |
+| `SDLC_INSTRUCTION` | No | Default task for `npm run sdlc:auto` |
+
+Do **not** commit `.env`.
+
+### 3. GitHub CLI
 
 ```bash
-npm run sdlc:auto
+gh auth login
+# or refresh if token expired:
+gh auth refresh -h github.com
 ```
 
-That runs `npm run sdlc` with **no argv**; the orchestrator uses **`process.env.SDLC_INSTRUCTION`** as the default instruction (CLI args still win if you pass them).
-
-Similarly, **`npm run sdlc:publish`** runs **`npm run sdlc -- --publish`** with no argv (instruction still from **`SDLC_INSTRUCTION`**).
-
-On **GitHub Actions**, use workflow [`.github/workflows/sdlc.yml`](.github/workflows/sdlc.yml): set repo secrets **`OPENAI_API_KEY`**, optionally **`SDLC_INSTRUCTION`**, and **`GH_TOKEN`** (or rely on the default `GITHUB_TOKEN`). Trigger **workflow_dispatch** or edit the `schedule` cron — no one types `npm run sdlc` on their laptop.
-
-### Cursor agent: edit in the editor, then PR + merge (no full SDLC)
-
-The orchestrator cannot see Cursor’s chat or tool edits until they are **saved as files in the repo**. For **PR + auto-merge from those files** (no OpenAI plan/implementation pass):
-
-1. Set **`"isolatedWorktree": false`** in **`sdlc.features.json`** (publish uses your **main checkout**; `true` is for isolated SDLC worktrees).
-2. Put the short description in **`SDLC_INSTRUCTION`** (`.env` or export).
-3. Let the agent change files, then run:
-
-   ```bash
-   npm run sdlc -- --publish
-   ```
-
-   Or hands-off: **`npm run sdlc:publish`**.
-
-Optional: **`.cursor/hooks.json`** runs **`.cursor/hooks/sdlc-publish-on-stop.sh`** on **`stop`**. Enable with **`SDLC_CURSOR_PUBLISH_ON_STOP=1`** in `.env` and **`"agentEditAutoPublish": true`** in **`sdlc.features.json`** — after each agent completion it runs **`npm run sdlc:publish`** (can be slow; requires `gh` auth).
-
-### CLI flags
-
-| Flag | Behavior |
-|------|----------|
-| (default) | Full pipeline from `orchestrator/sdlc.config.ts` |
-| `--dry-run` | Print merged config (policy + `sdlc.features.json`) to stdout |
-| `--status` | Print `.sdlc/workflow-state.json` |
-| `--resume` | Stub — shows state only (full resume not implemented) |
-| `--deploy-only` | `docker compose` up + health curls |
-| `--review-only` | Not implemented — use full run |
-| `--publish` | Commit **existing** working-tree changes, push, open PR, merge (no SDLC AI); requires **`isolatedWorktree: false`** |
-
-Environment overrides:
-
-| Variable | Purpose |
-|----------|---------|
-| `OPENAI_API_KEY` / `OPENAI_MODEL` | AI provider |
-| `SDLC_INSTRUCTION` | Default task when `npm run sdlc` / `sdlc:auto` have **no** quoted instruction (CLI args override) |
-| `SDLC_VERIFY_COMMAND` | Override pre-SDLC verification command on `main` (default from `mainRepoVerificationCommand` in `sdlc.features.json`) |
-| `SDLC_SKIP_MAIN_VERIFY` | `1` skips `runMainRepoVerificationBeforeSdlc` even when enabled in JSON |
-| `GITHUB_OWNER` / `GITHUB_REPO` | Override for `gh` when origin URL is unusual |
-| `GITHUB_BASE_BRANCH` | PR base (else `gh repo view … defaultBranchRef`) |
-| `SDLC_SKIP_LABEL_ENSURE` | `1` skips `gh label create` before PR (default: create missing labels from `sdlc.config.ts` so `gh pr create --label` succeeds) |
-| `SDLC_SKIP_PLAYWRIGHT` | `1` skips E2E (**mandatory e2e will fail merge** if enabled in config) |
-| `SDLC_DEPLOY_LOCAL` | `1` runs `docker compose up -d --build` after **successful** `gh pr merge` (also set **`autoDeployLocal`** in `sdlc.features.json` to default-on without env) |
-| `SDLC_INSTALL_AIHERO_SKILLS` | `1` runs `npx skills@latest add mattpocock/skills` when `skills/` is empty |
-| `SDLC_KEEP_WORKTREE` | `1` keeps `.sdlc-worktrees/…` after run |
-| `SDLC_SKIP_AUTO_PULL` | `1` skips all automatic `git fetch` + fast-forward merges on your base-branch checkout (see `autoPullMain*` in `sdlc.features.json`) |
-| `SDLC_SKIP_SYNC_BEFORE_MERGE` | `1` skips **rebase onto `origin/<base>`** + **`git push --force-with-lease`** before `gh pr merge` (default: sync so GitHub can merge when `main` moved during the run) |
-| `SDLC_MERGE_USE_AUTO` | `1` / `0` — override **`mergeUseGhAuto`**: try **`gh pr merge … --auto`** first; **`--delete-branch`** is added when **`cleanupFeatureBranchAfterMerge`** in `sdlc.config.ts` is true |
-| `SDLC_SKIP_RESET_MAIN_AFTER_MERGE` | `1` skips **`git reset --hard origin/<base>`** after a successful merge when **`resetMainCheckoutAfterMerge`** is true |
-| `SDLC_SKIP_ALIGN_MAIN_AFTER_RUN` | `1` skips **`git fetch` + `checkout -f <base>` + `reset --hard origin/<base>`** after each run when **`alignMainWithRemoteAfterRun`** is true |
-| `SDLC_CLEAN_UNTRACKED_AFTER_ALIGN` | `1` runs **`git clean -fd`** after align (deletes untracked files — use only if you accept data loss) |
-| `SDLC_CURSOR_PUBLISH_ON_STOP` | `1` allows the Cursor **`stop`** hook to run **`npm run sdlc:publish`** (also set **`agentEditAutoPublish`** in `sdlc.features.json`) |
-| `SDLC_SKIP_PR_CHECKLIST` | `1` skips live PR body updates (pipeline checklist + AI Hero skill table) |
-| `SDLC_PR_STEP_COMMENTS` | `1` posts a PR comment after each successful pipeline step (off by default) |
-| `SDLC_SKIP_PR_ERROR_COMMENT` | `1` skips the failure comment on the PR |
-| `SDLC_NOTIFY_ON_ERROR` | `0` skips writing `.sdlc/last-error.json` and PR failure comments |
-| `SDLC_NO_COLOR` / `NO_COLOR` | `1` disables colored bullet logs (plain `•` only) |
-| `SDLC_FORCE_COLOR` | `1` forces colors when stdout is not a TTY (e.g. some CI logs) |
-
-## What `npm run sdlc` does
-
-1. Reads **`orchestrator/sdlc.config.ts`** (compiled to `dist/sdlc.config.js` at build time) and merges optional **`sdlc.features.json`** at the repo root.  
-2. Optionally **fast-forwards** a **clean** base-branch checkout (`autoPullMainBeforeRun`).  
-3. Optionally **verifies** the **main** checkout before the worktree (`runMainRepoVerificationBeforeSdlc`, default command `npm run build`) — fails fast if your last local/test state is broken.  
-4. By default creates a **linked Git worktree** under `.sdlc-worktrees/` (**main checkout not modified**). Set `isolatedWorktree: false` in `sdlc.features.json` to use a new branch in the main clone instead (requires a **clean** working tree).  
-5. Syncs paths from `syncPathsFromMain`, then (by default) **uncommitted files from your main checkout** into the worktree — isolated runs no longer ignore files you have not committed on `main`.  
-6. **Plans** (OpenAI) using selected `skills/*/SKILL.md` content.  
-7. **Implements** via OpenAI JSON patches (or a tiny fallback when no key).  
-8. Runs **quality gates** from config (build, audit, e2e, optional DAST curl, optional `docker compose build`). **Skipped** gates are logged as **skipped**, not **passed**.  
-9. **Commits** with a Conventional-Commit **title + body** (OpenAI + selected skills when **`autoCommitMessageFromSkills`** and `OPENAI_API_KEY` are set; else template).  
-10. **Pushes** + **ensures PR labels exist** (`gh label create … --force` for each configured label, unless `SDLC_SKIP_LABEL_ENSURE=1`) + **`gh pr create`** with a **live checklist** (✅ per step) and **AI Hero skills** table (refreshed after each major phase) + optional **pull on base branch** (`autoPullMainAfterPr`).  
-11. **AI review** loop (up to `maxAiReviewIterations`) with optional auto-fix commits + push.  
-12. **Sync branch for merge**: **`git fetch`**, **`git rebase origin/<baseBranch>`** on the feature branch, **`git push --force-with-lease`** (unless **`SDLC_SKIP_SYNC_BEFORE_MERGE=1`**) so GitHub does not report “not mergeable” when the default branch advanced mid-run.  
-13. **`gh pr merge`** (`--squash` per `mergeStrategy`) — tries **`--auto`** first when **`mergeUseGhAuto`** is true (or **`SDLC_MERGE_USE_AUTO=1`**), then a direct merge if queueing fails; adds **`--delete-branch`** when **`cleanupFeatureBranchAfterMerge`** is true — **never** `--admin`; branch protection still applies; optional **pull** on local `main` (`autoPullMainAfterMerge`).  
-14. Optional **hard reset** of local **`main`** to **`origin/main`** when **`resetMainCheckoutAfterMerge`** is true (clears leftover uncommitted noise — skipped if the tree is dirty or **`SDLC_SKIP_RESET_MAIN_AFTER_MERGE=1`**).  
-15. Optional **local Docker deploy** if merge succeeded and **`autoDeployLocal`** is true in `sdlc.features.json` **or** `SDLC_DEPLOY_LOCAL=1`.  
-16. Writes a Markdown report under `artifacts/sdlc-reports/` and `.sdlc/workflow-state.json`.
-
-## Run the app locally
+### 4. Run the app (manual)
 
 ```bash
-npm install
 npm run dev
 ```
 
-- UI: http://localhost:5173  
-- API: http://localhost:4000/health  
+- Web: http://localhost:5173  
+- API health: http://localhost:4000/health  
 
-## Tests
+### 5. Run one automated SDLC task
 
 ```bash
-npm run test:orchestrator
-npm run test:e2e
-npm run security
-npm run build
+npm run sdlc -- "Analyze the Todo app and propose one small, safe improvement."
 ```
 
-## Configuration
+Watch for:
 
-Edit **`orchestrator/sdlc.config.ts`** for AI limits, which gates are mandatory, PR labels, merge strategy, Docker health URLs, etc. **Do not put secrets in this file** — use `.env` / environment variables only.
+- `openai — API key loaded`  
+- `github — https://github.com/.../pull/N`  
+- Report under `artifacts/sdlc-reports/`
 
-**Feature branch names** (`git.featureBranchNaming`, default **`semantic`**): derived from the instruction as `{type}/{kebab-slug}-{6hex}` — e.g. `feat/add-todo-filters-a3f91b`, `fix/api-500-on-delete-b2c4d1`, `refactor/split-web-app-c91e02`. Types are inferred (`feat`, `fix`, `chore`, `refactor`, `docs`, `test`, …). Optional `git.featureBranchScope` → `feat/<scope>-slug-abc123`. Set **`featureBranchNaming`: `"timestamp"`** to restore legacy `sdlc/agent-<iso-stamp>` names.
+### 6. Verify env (optional)
 
-### Feature toggles (`sdlc.features.json`)
+```bash
+npm run sdlc:check-env
+```
 
-Copy or edit **`sdlc.features.json`** at the **repository root** (next to the root `package.json`). Keys are optional; omitted keys use defaults (`npm run sdlc -- --dry-run` prints the merged result).
+---
 
-| Key | Default | Effect |
-|-----|---------|--------|
-| `fullAgentAutomation` | `false` | **`true`**: sets `autoCommit`, `autoPush`, `autoPr`, `autoMerge` and **`requireHumanApprovalBeforeMerge: false`** so the CLI keeps trying through merge without a separate “human merge only” toggle. |
-| `requireHumanApprovalBeforeMerge` | `false` | `true`: **skip** `gh pr merge` (human merges on GitHub). `false`: run merge when `autoMerge` and policy allow. |
-| `runMainRepoVerificationBeforeSdlc` | `false` | `true`: run **`mainRepoVerificationCommand`** on the **main checkout** after pull, **before** the worktree (built-in “tested baseline” gate). |
-| `mainRepoVerificationCommand` | `npm run build` | Shell command for that verification; override with env **`SDLC_VERIFY_COMMAND`**. |
-| `resetMainCheckoutAfterMerge` | `false` | `true`: after a successful merge (full SDLC or `--publish`), **`git reset --hard origin/<baseBranch>`** on a **clean** checkout of `baseBranch` (clears stray uncommitted files). |
-| `alignMainWithRemoteAfterRun` | `false` | `true`: after **every** full SDLC / `--publish` run, force **`git checkout -f <base>`** + **`git reset --hard origin/<base>`** so local base matches GitHub (resolves dirty/conflict state). Optional untracked wipe: **`SDLC_CLEAN_UNTRACKED_AFTER_ALIGN=1`**. |
-| `agentEditAutoPublish` | `false` | `true`: Cursor **`stop`** hook may run **`npm run sdlc:publish`** when **`SDLC_CURSOR_PUBLISH_ON_STOP=1`** (see README “Cursor agent”). |
-| `isolatedWorktree` | `true` | `true`: linked worktree under `.sdlc-worktrees/`. `false`: new branch in the main clone (requires clean tree). |
-| `pruneStaleWorktreesOnStart` | `true` | Remove stale linked worktrees under `.sdlc-worktrees/` before each run. |
-| `autoImplement` | `true` | OpenAI (or fallback) code edits. `false`: plan + gates only, no patch application. |
-| `aiHeroSkills` | `true` | Discover `skills/*/SKILL.md`, route into plan/review prompts. `false`: skip skill discovery. |
-| `ai.review` | `true` | Post-PR AI Hero review loop. `false`: skip review. |
-| `ai.reviewAutoFix` | `true` | Apply review JSON patches, commit, and push (needs `autoCommit`). `false`: findings only. |
-| `ai.reviewPrComments` | `true` | Post severity-grouped + inline GitHub PR comments after review. |
-| `qualityGates` | `true` | Run gates from `sdlc.config.ts`. `false`: gates skipped (**`--publish`** uses this too; mandatory **skipped** does not block auto-merge). |
-| `autoCommit` | `true` | Commit changes in the session. |
-| `autoPush` | `true` | Push the feature branch (`false` also disables PR creation; `gh pr create` needs a pushed branch). |
-| `autoPr` | `true` | `gh pr create` when commit + push ran. |
-| `autoMerge` | `true` | `gh pr merge` when policy allows (GitHub branch protection still applies). |
-| `mergeUseGhAuto` | `true` | `true`: run **`gh pr merge … --auto`** first (merge queue when checks block); `false`: direct merge only. Override with **`SDLC_MERGE_USE_AUTO`**. |
-| `autoDeployLocal` | `false` | After successful merge: run local `docker compose` deploy (requires `docker.enabled` in `sdlc.config.ts`). Env `SDLC_DEPLOY_LOCAL=1` still works. |
-| `syncUncommittedFromMain` | `true` | After `syncPathsFromMain`, copy **uncommitted** files from your main checkout into the worktree so `autoCommit` can include local edits (without committing on `main` first). Set `false` to only use committed state + listed sync paths + AI. |
-| `autoPullMainBeforeRun` | `true` | Before the worktree: if you're on a **clean** `git.baseBranch`, `git fetch` + `merge --ff-only origin/<branch>`. |
-| `autoPullMainAfterPr` | `true` | After a PR is created: same **fast-forward pull** on your `main` checkout (if clean and on base branch). |
-| `autoPullMainAfterMerge` | `true` | After **`gh pr merge` succeeds**: fast-forward **local** `main` so it includes the merge. |
-| `autoCommitMessageFromSkills` | `true` | If `OPENAI_API_KEY` is set and **Hero skills** were selected, use the model to draft the conventional commit (aligned with `SKILL.md` context); otherwise use the template. |
+## Main commands
 
-## Fully automated merge (no human in the loop)
+| Command | What it does |
+|---------|----------------|
+| `npm run sdlc -- "task"` | Full pipeline (worktree, AI, gates, PR, review, merge if allowed) |
+| `npm run sdlc:auto` | Same, instruction from `SDLC_INSTRUCTION` in `.env` |
+| `npm run sdlc -- --dry-run` | Print merged config (policy + features) |
+| `npm run sdlc -- --publish` | Commit **your current edits**, PR, merge (no AI implement; needs `isolatedWorktree: false`) |
+| `npm run sdlc:worker` | Loop: GitHub issues + `tasks/queue.json` |
+| `npm run build` | Typecheck/build all workspaces |
+| `npm run test:e2e` | Playwright (starts API + web) |
+| `npm run precommit:check` | Build + E2E (what Husky runs) |
+| `npm run sdlc:check-env` | Confirm `.env` loads OpenAI key (no secret printed) |
 
-**`gh pr merge` cannot bypass GitHub.** Zero humans only works if **repository rules** allow the **account or token** running `gh` to merge without a person clicking Approve.
+---
 
-Configure the repo (or organization) so that for the **default branch**:
+## Enable / disable features
 
-1. **Required reviews** — either **0** required approving reviews, or use a **bot** account that is allowed as CODEOWNERS/approver and have automation approve (this repo does **not** implement auto-approve; GitHub’s own rules must permit merge).
-2. **Status checks** — either no required checks, or **all** checks that run on the PR can turn **green** from automation (e.g. GitHub Actions with `GITHUB_TOKEN` / deploy keys).
-3. **Allow merge** — squash/merge/rebase must match **`mergeStrategy`** in `orchestrator/sdlc.config.ts` and what the branch allows.
-4. **`gh` identity** — `gh auth login` as a user/bot whose role is **maintain/write** and who is not blocked by “review required from specific teams only” unless that identity is in those teams.
+Edit **`sdlc.features.json`** at the repo root. Defaults are merged with `orchestrator/sdlc.config.ts`.
 
-With **`mergeUseGhAuto`**: if checks are still running, the CLI queues **`gh pr merge … --auto`** and polls until the PR **MERGED** or **`SDLC_MERGE_WAIT_MS`** is hit. If policy **never** allows merge (e.g. human-only approval forever), the run stays **blocked** — correct behavior.
+Use nested groups (recommended):
 
-This orchestrator **never** uses **`--admin`** merge (no bypass of branch protection).
+```json
+{
+  "automation": { "fullAgentAutomation": true },
+  "ai": {
+    "autoImplement": true,
+    "heroSkills": true,
+    "review": true,
+    "reviewAutoFix": true,
+    "reviewPrComments": true,
+    "compactPrompts": true
+  },
+  "delivery": {
+    "autoCommit": true,
+    "autoPush": true,
+    "autoPr": true,
+    "autoMerge": true
+  },
+  "quality": { "gatesInWorktree": true },
+  "git": { "isolatedWorktree": true }
+}
+```
 
-## Honest limits
+### Cheat sheet (plain English)
 
-- **SAST / ESLint** gates are present in config but not wired to dedicated tools in this repo yet (disabled by default).  
-- **Full resume** (`--resume`) and **`--review-only`** are placeholders.  
-- **Merge** depends on GitHub: if checks or human-only approvals are required and not satisfied, `gh pr merge` waits, fails, or stays queued — **by design** (no bypass).  
-- **True AI Hero / Cursor skill execution** in-process is not available here; skills are **loaded from disk** and **verified** via `SKILL.md` presence, then used as **prompt context**.
+| You want… | Set in `sdlc.features.json` |
+|-----------|-------------------------------|
+| Hands-off commit → PR → merge | `"fullAgentAutomation": true` + working `gh` auth |
+| AI writes code | `ai.autoImplement`: `true` |
+| AI review on PR | `ai.review`: `true` |
+| AI fixes review findings + pushes | `ai.reviewAutoFix`: `true` (needs `delivery.autoCommit`) |
+| GitHub review comments | `ai.reviewPrComments`: `true` |
+| Build + audit + Playwright before commit | `quality.gatesInWorktree`: `true` |
+| No worktree (publish from main clone) | `git.isolatedWorktree`: `false` |
+| Human merges on GitHub | `automation.requireHumanApprovalBeforeMerge`: `true` |
+| Stop hard-resetting `main` after every run | `git.alignMainWithRemoteAfterRun`: `false` or `SDLC_SKIP_ALIGN_MAIN_AFTER_RUN=1` in `.env` |
+| Smaller OpenAI prompts (fewer tokens) | `ai.compactPrompts`: `true` (default) — see [docs/IMPROVEMENTS-AND-TOKENS.md](docs/IMPROVEMENTS-AND-TOKENS.md) |
+
+**Policy details** (timeouts, mandatory gates, PR labels): edit `orchestrator/sdlc.config.ts`.  
+**Per-project paths** (which files AI sees): `sdlc.project.json`.
+
+### Environment overrides (one-off)
+
+| Variable | Effect |
+|----------|--------|
+| `SDLC_SKIP_PLAYWRIGHT=1` | Skip E2E in SDLC (mandatory e2e may block merge) |
+| `SDLC_SKIP_REVIEW_AUTO_FIX=1` | Review runs; no auto-fix commits |
+| `SDLC_SKIP_PR_REVIEW_COMMENTS=1` | No PR review comments |
+| `SDLC_SKIP_ALIGN_MAIN_AFTER_RUN=1` | Do not hard-reset local `main` after run |
+| `SKIP_PRE_COMMIT_CHECKS=1` | Skip Husky build/e2e once |
+| `SDLC_SKIP_PLAN=1` | Skip OpenAI plan step (saves one API call) |
+| `SDLC_MAX_CHARS_PER_FILE` / `_PER_SKILL` | Override prompt size caps |
+
+Full list: **`.env.example`**. Deeper guide: **[docs/IMPROVEMENTS-AND-TOKENS.md](docs/IMPROVEMENTS-AND-TOKENS.md)** (feature list, token tips, roadmap).
+
+---
+
+## Feature list (pipeline)
+
+| Category | Capabilities |
+|----------|----------------|
+| **Git** | Worktree isolation, feature branches, sync uncommitted, pull/ff main, optional align/reset after run |
+| **AI** | Plan, implement patches, Hero skills, review + auto-fix, PR review comments, skill-aware commit messages |
+| **Quality** | Build, npm audit, Playwright E2E, optional Docker/SAST gates |
+| **Delivery** | Auto commit/push/PR/merge (`fullAgentAutomation`) |
+| **Observability** | Step logs, `artifacts/sdlc-reports/`, `.sdlc/last-error.json` |
+| **Worker** | `sdlc:worker` — issues + `tasks/queue.json` |
+
+---
+
+## AI Hero skills
+
+Skills live under **`skills/<id>/SKILL.md`**. The orchestrator **reads** them and adds the text to OpenAI prompts (plan + review). It does **not** run Cursor’s skill tools.
+
+**Shipped examples** (repo root `skills/`):
+
+- `typescript-strict` — strict TypeScript habits  
+- `react-accessibility` — a11y for React  
+- `api-security` — API security checks  
+
+**Enable / disable skills for a run:**
+
+- `ai.heroSkills`: `true` in `sdlc.features.json` (discovery + routing)  
+- Add folders under `skills/` with a `SKILL.md`  
+- Optional catalog install: `SDLC_INSTALL_AIHERO_SKILLS=1` (see `skills/README.md`)
+
+There is also a large **`.agents/skills/`** tree (Cursor/agent docs); SDLC’s default catalog for this app is **`skills/`** at the repo root.
+
+---
+
+## What `npm run sdlc` does (short)
+
+1. Load `.env` (OpenAI + GitHub).  
+2. Create a **feature branch** in a worktree (unless in-place mode).  
+3. Copy uncommitted files from your main checkout if enabled.  
+4. **Plan** + **implement** with OpenAI (and skills).  
+5. **Build** + **Playwright** (+ other gates if enabled).  
+6. **Commit** → **push** → **`gh pr create`**.  
+7. **AI review** → optional **auto-fix** → **PR comments** (severity).  
+8. **Merge** via `gh` if policy + GitHub allow.  
+9. Write report to `artifacts/sdlc-reports/` and `.sdlc/workflow-state.json`.
+
+Longer step-by-step and env tables lived in earlier README revisions; see also **`docs/ADOPT-IN-YOUR-REPO.md`**, **`docs/PLAYWRIGHT-MCP.md`**.
+
+---
+
+## Playwright + pre-commit
+
+- **SDLC:** `quality.gatesInWorktree: true` runs E2E before commit.  
+- **Local git:** Husky runs `scripts/pre-commit-check.mjs` (`npm run build` + `test:e2e`) after `npm install`.  
+- **Cursor:** Playwright MCP in [`.cursor/mcp.json`](.cursor/mcp.json) — see [docs/PLAYWRIGHT-MCP.md](docs/PLAYWRIGHT-MCP.md).
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely fix |
+|---------|------------|
+| `No OPENAI_API_KEY: skipped…` | Key in repo root `.env`; re-run; look for `openai — API key loaded` |
+| PR not created | `gh auth login` or `GITHUB_TOKEN` in `.env`; remove blank `GITHUB_OWNER=` lines |
+| Merge skipped | No PR number, failing mandatory gates, or GitHub branch protection |
+| Pipeline “stuck” after sync | Next step is **silent `npm install` in the worktree** (1–3 min), then OpenAI plan/implement — you should see `npm install (worktree)`, `plan`, `implement` lines after updating orchestrator |
+| Local changes gone after SDLC | `alignMainWithRemoteAfterRun: true` hard-resets `main` — commit orchestrator changes or disable align |
+| `gatesInWorktree: false` | All worktree gates off — turn **`quality.gatesInWorktree`** to **`true`** for build/e2e before commit |
+
+Errors: **`.sdlc/last-error.json`**.
+
+---
+
+## Project layout
+
+```
+apps/web/          → React UI
+apps/api/          → Express API
+orchestrator/      → SDLC CLI + worker
+skills/            → AI Hero SKILL.md files (SDLC uses these)
+sdlc.features.json → On/off switches (start here)
+sdlc.project.json  → Which files/commands for this repo
+orchestrator/sdlc.config.ts → Timeouts, gate policy, PR templates
+.env               → Secrets (not in git)
+.cursor/mcp.json   → Optional Cursor MCP servers
+```
+
+---
 
 ## Security
 
-- Keep `.env` out of Git.  
-- Treat model output as untrusted; review PRs.  
-- Use least-privilege `gh` and GitHub tokens.
+- Never commit `.env` or API keys.  
+- Treat AI-generated patches as untrusted until reviewed.  
+- Use least-privilege GitHub tokens.  
+- The orchestrator never uses `gh pr merge --admin`.
+
+---
+
+## License / adoption
+
+Use **`docs/ADOPT-IN-YOUR-REPO.md`** to copy the orchestrator into another project and tune `sdlc.project.json`.

@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { applyPatches, extractJsonObject, parsePatches, readTextFileSafe } from '../patch.js';
+import { truncateForPrompt } from './prompt-budget.js';
 
 export class AgentExecutor {
   constructor(
@@ -11,11 +12,13 @@ export class AgentExecutor {
 
   async implement(
     instruction: string,
-    ctx: { paths: string[]; repoRoot: string; buildFeedback?: string },
+    ctx: { paths: string[]; repoRoot: string; buildFeedback?: string; maxCharsPerFile?: number; maxBuildFeedbackChars?: number },
   ): Promise<{ patches: import('../patch.js').FilePatch[]; summary: string }> {
+    const maxFile = ctx.maxCharsPerFile ?? 24_000;
+    const maxFeedback = ctx.maxBuildFeedbackChars ?? 3_500;
     const parts: string[] = [];
     for (const p of ctx.paths) {
-      const text = await readTextFileSafe(ctx.repoRoot, p);
+      const text = await readTextFileSafe(ctx.repoRoot, p, maxFile);
       if (text === null) continue;
       parts.push(`--- FILE: ${p} ---\n${text}`);
     }
@@ -25,7 +28,7 @@ Paths must be repo-relative forward slashes.
 Patches MUST keep \`npm run build\` passing (strict TypeScript). For Express 5, \`req.params.*\` is \`string | string[]\` — use \`routeParam\` from apps/api/src/route-params.ts when touching API routes. After \`parseTitle\`, narrow with \`if (!parsed.ok) return\` then destructure \`const { title } = parsed\`.`;
 
     const buildBlock = ctx.buildFeedback?.trim()
-      ? `\n\nPrevious build FAILED — fix these errors in your patches:\n\`\`\`\n${ctx.buildFeedback.slice(-4000)}\n\`\`\`\n`
+      ? `\n\nPrevious build FAILED — fix these errors in your patches:\n\`\`\`\n${truncateForPrompt(ctx.buildFeedback.slice(-maxFeedback * 2), maxFeedback, 'build log')}\n\`\`\`\n`
       : '';
 
     const user = `${system}\n\nInstruction:\n${instruction}${buildBlock}\n\nFiles:\n${parts.join('\n\n')}`;

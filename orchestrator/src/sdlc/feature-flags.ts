@@ -33,6 +33,8 @@ export type SdlcFeatureFlags = {
   aiReviewAutoFix: boolean;
   /** Post severity-grouped + inline comments on the PR after review (`sdlc.features.json` / github config). */
   aiReviewPrComments: boolean;
+  /** Smaller OpenAI prompts (truncate skills/files; git-diff review). Default `true`. */
+  aiCompactPrompts: boolean;
   /** Run build / audit / e2e / optional gates from sdlc.config.ts. */
   qualityGates: boolean;
   /** git commit task changes in the worktree. */
@@ -99,6 +101,7 @@ const defaultFlags: SdlcFeatureFlags = {
   aiReview: true,
   aiReviewAutoFix: true,
   aiReviewPrComments: true,
+  aiCompactPrompts: true,
   qualityGates: true,
   autoCommit: true,
   autoPush: true,
@@ -169,6 +172,9 @@ export function normalizeFeatureFlagsJson(parsed: Record<string, unknown>): Part
     if (coerceBool(ai.reviewPrComments) !== undefined) out.aiReviewPrComments = coerceBool(ai.reviewPrComments);
     if (coerceBool(ai.commitMessageFromSkills) !== undefined) {
       out.autoCommitMessageFromSkills = coerceBool(ai.commitMessageFromSkills);
+    }
+    if (coerceBool(ai.compactPrompts) !== undefined) {
+      out.aiCompactPrompts = coerceBool(ai.compactPrompts);
     }
   }
 

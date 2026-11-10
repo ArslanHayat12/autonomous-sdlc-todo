@@ -21,7 +21,9 @@ export async function buildCommitMessageWithSkills(options: {
   implementationSummary: string;
   gateSummary: string;
   fallbackBody: CommitBody;
+  maxCharsPerSkill?: number;
 }): Promise<{ title: string; body: string }> {
+  const maxSkill = options.maxCharsPerSkill ?? 1_500;
   const gen = new CommitMessageGenerator();
   const fbTitle = gen.generateTitle('sdlc', options.implementationSummary || options.instruction);
   const fbBody = gen.generateBody(options.fallbackBody);
@@ -31,7 +33,11 @@ export async function buildCommitMessageWithSkills(options: {
   }
 
   const skillSnippets = options.selectedSkills
-    .map(s => `### ${s.id}\n${s.body.slice(0, 2500)}`)
+    .map(s => {
+      const body = s.body.trim();
+      const clip = body.length > maxSkill ? `${body.slice(0, maxSkill)}\n… [truncated] …` : body;
+      return `### ${s.id}\n${clip}`;
+    })
     .join('\n\n---\n\n');
 
   const prompt = `You write git commit messages for an autonomous SDLC pipeline.

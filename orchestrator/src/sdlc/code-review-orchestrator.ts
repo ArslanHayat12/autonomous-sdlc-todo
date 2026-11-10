@@ -2,24 +2,39 @@ import OpenAI from 'openai';
 import { execGit } from '../git-exec.js';
 import { applyPatches, readTextFileSafe, extractJsonObject } from '../patch.js';
 import { parseReviewJson } from '../review-json.js';
+import type { PromptBudget } from './prompt-budget.js';
+import { truncateForPrompt } from './prompt-budget.js';
+
 export class CodeReviewOrchestrator {
   constructor(
     private client: OpenAI,
     private model: string,
+    private budget: PromptBudget,
   ) {}
 
   async runIteration(
     instruction: string,
     skillsBlock: string,
-    session: { path: string },
+    session: { path: string; baseSha?: string },
     paths: string[],
   ): Promise<ReturnType<typeof parseReviewJson>> {
     const diffStat = execGit(session.path, ['diff', '--stat', 'HEAD']).trim();
     const parts: string[] = [];
+    const base = session.baseSha?.trim();
     for (const p of paths) {
-      const text = await readTextFileSafe(session.path, p);
-      if (text === null) continue;
-      parts.push(`--- ${p} ---\n${text}`);
+      let block: string | null = null;
+      if (this.budget.reviewPreferGitDiff && base) {
+        const diff = execGit(session.path, ['diff', `${base}...HEAD`, '--', p], true).trim();
+        if (!diff.startsWith('__GIT_FAIL__') && diff) {
+          block = `--- diff ${p} (${base}...HEAD) ---\n${truncateForPrompt(diff, this.budget.maxCharsPerFile, 'diff')}`;
+        }
+      }
+      if (!block) {
+        const text = await readTextFileSafe(session.path, p, this.budget.maxCharsPerFile);
+        if (text === null) continue;
+        block = `--- ${p} ---\n${text}`;
+      }
+      parts.push(block);
     }
     const system = `Strict reviewer. Output ONLY JSON:
 {"findings":[{"severity":"critical|high|medium|low","file":"path","issue":"...","fix":"..."}],"needsMoreChanges":true|false,"patches":[{"path":"rel","content":"..."}]}
