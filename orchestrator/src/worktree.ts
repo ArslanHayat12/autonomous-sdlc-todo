@@ -1,6 +1,8 @@
 import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { execGit } from './git-exec.js';
+import type { BuildBranchNameOptions } from './sdlc/feature-branch-name.js';
+import { buildFeatureBranchName } from './sdlc/feature-branch-name.js';
 
 export type WorktreeSession = {
   /** Real filesystem path of the isolated clone (linked worktree) */
@@ -58,7 +60,9 @@ export function resolveMainBaseSha(mainRepoRoot: string, baseBranch = 'main'): s
 export type WorktreeOptions = {
   branchPrefix?: string;
   worktreesDirectory?: string;
-};
+  instruction?: string;
+  branchName?: string;
+} & BuildBranchNameOptions;
 
 /**
  * Creates a linked worktree with a new branch from `baseSha`. Does not read or modify
@@ -69,9 +73,14 @@ export async function createIsolatedWorktree(
   baseSha: string,
   options: WorktreeOptions = {},
 ): Promise<WorktreeSession> {
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const prefix = options.branchPrefix ?? 'sdlc/agent-';
-  const branch = `${prefix}${stamp}`;
+  const branch =
+    options.branchName?.trim() ||
+    buildFeatureBranchName(options.instruction ?? 'sdlc-run', {
+      naming: options.naming,
+      legacyPrefix: options.branchPrefix,
+      scope: options.scope,
+      publish: options.publish,
+    });
   const parent = path.join(mainRepoRoot, options.worktreesDirectory ?? '.sdlc-worktrees');
   await mkdir(parent, { recursive: true });
   const wtPath = path.join(parent, branch.replace(/\//g, '__'));
@@ -91,9 +100,14 @@ export function createFeatureBranchInPlace(
   baseSha: string,
   options: WorktreeOptions = {},
 ): WorktreeSession {
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const prefix = options.branchPrefix ?? 'sdlc/agent-';
-  const branch = `${prefix}${stamp}`;
+  const branch =
+    options.branchName?.trim() ||
+    buildFeatureBranchName(options.instruction ?? 'sdlc-run', {
+      naming: options.naming,
+      legacyPrefix: options.branchPrefix,
+      scope: options.scope,
+      publish: options.publish,
+    });
   const dirty = trim(execGit(mainRepoRoot, ['status', '--porcelain'], true));
   if (dirty && !dirty.startsWith('__GIT_FAIL__')) {
     throw new Error(

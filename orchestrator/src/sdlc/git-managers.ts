@@ -16,16 +16,18 @@ export class GitWorktreeManager {
     return resolveMainBaseSha(mainRepoRoot, this.cfg.git.baseBranch);
   }
 
-  async create(mainRepoRoot: string, baseSha: string): Promise<WorktreeSession> {
-    if (this.cfg.git.worktreesEnabled) {
-      return createIsolatedWorktree(mainRepoRoot, baseSha, {
-        branchPrefix: this.cfg.git.featureBranchPrefix,
-        worktreesDirectory: this.cfg.git.worktreesDirectory,
-      });
-    }
-    return createFeatureBranchInPlace(mainRepoRoot, baseSha, {
+  async create(mainRepoRoot: string, baseSha: string, instruction: string): Promise<WorktreeSession> {
+    const branchOpts = {
       branchPrefix: this.cfg.git.featureBranchPrefix,
-    });
+      worktreesDirectory: this.cfg.git.worktreesDirectory,
+      instruction,
+      naming: this.cfg.git.featureBranchNaming,
+      scope: this.cfg.git.featureBranchScope,
+    };
+    if (this.cfg.git.worktreesEnabled) {
+      return createIsolatedWorktree(mainRepoRoot, baseSha, branchOpts);
+    }
+    return createFeatureBranchInPlace(mainRepoRoot, baseSha, branchOpts);
   }
 
   async remove(session: WorktreeSession, restoreBranch?: string): Promise<void> {

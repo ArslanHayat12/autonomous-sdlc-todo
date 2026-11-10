@@ -8,7 +8,7 @@
     "sdlc:worker": "tsx src/worker-cli.ts start",
     "sdlc:worker-status": "tsx src/worker-cli.ts status",
     "sdlc:worker-stop": "tsx src/worker-cli.ts stop",
-    "test": "node --import tsx/esm --test src/worktree.test.ts"
+    "test": "node --import tsx/esm --test src/worktree.test.ts src/sdlc/pipeline-progress.test.ts src/sdlc/feature-branch-name.test.ts"
   },
   "dependencies": { "openai": "^5.20.0" },
   "devDependencies": { "tsx": "^4.20.6", "@types/node": "^24.7.2" }

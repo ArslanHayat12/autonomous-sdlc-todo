@@ -43,6 +43,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Run SDLC
+        id: sdlc_run
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'gpt-4.1-mini' }}
@@ -52,3 +53,31 @@ jobs:
           echo "${{ secrets.GH_TOKEN || github.token }}" | gh auth login --with-token
           gh auth setup-git
           npm run sdlc:auto
+
+      - name: SDLC job summary
+        if: always()
+        run: |
+          {
+            echo "## SDLC pipeline"
+            echo ""
+            if [ -f .sdlc/workflow-state.json ]; then
+              echo "### Workflow state"
+              echo '```json'
+              cat .sdlc/workflow-state.json
+              echo '```'
+            fi
+            if [ -f .sdlc/last-error.json ]; then
+              echo "### Error (see PR comment if a PR was opened)"
+              echo '```json'
+              cat .sdlc/last-error.json
+              echo '```'
+            fi
+            if ls artifacts/sdlc-reports/report-*.md 1>/dev/null 2>&1; then
+              echo "### Latest report"
+              ls -t artifacts/sdlc-reports/report-*.md | head -1 | xargs -I{} sh -c 'echo "**File:** {}"; tail -n 40 {}'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f .sdlc/last-error.json ]; then
+            echo "::error title=SDLC failed::See .sdlc/last-error.json and the PR checklist comment"
+            exit 1
+          fi

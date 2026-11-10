@@ -4,12 +4,13 @@ import { execGit } from '../git-exec.js';
 import type { SdlcConfig } from '../../sdlc.config.js';
 
 /**
- * Removes stale `.sdlc-worktrees/sdlc__agent-*` directories and prunes git worktree metadata.
+ * Removes stale linked worktrees under `.sdlc-worktrees/` and prunes git worktree metadata.
  * Best-effort; ignores failures so a run can still proceed.
  */
 export async function pruneStaleSdlcWorktrees(mainRepoRoot: string, cfg: SdlcConfig): Promise<void> {
   if (!cfg.git.pruneStaleWorktreesOnStart) return;
-  const parent = path.join(mainRepoRoot, cfg.git.worktreesDirectory);
+  const wtDir = path.join(mainRepoRoot, cfg.git.worktreesDirectory);
+  const wtDirNorm = wtDir.endsWith(path.sep) ? wtDir : `${wtDir}${path.sep}`;
   let list = '';
   try {
     list = execGit(mainRepoRoot, ['worktree', 'list', '--porcelain'], true);
@@ -21,7 +22,10 @@ export async function pruneStaleSdlcWorktrees(mainRepoRoot: string, cfg: SdlcCon
   for (const line of lines) {
     if (line.startsWith('worktree ')) {
       const p = line.slice('worktree '.length).trim();
-      if (p.includes(`${cfg.git.worktreesDirectory}/sdlc__agent-`)) paths.push(p);
+      const isMain = path.resolve(p) === path.resolve(mainRepoRoot);
+      if (!isMain && (p.startsWith(wtDirNorm) || p.includes(`${cfg.git.worktreesDirectory}${path.sep}`))) {
+        paths.push(p);
+      }
     }
   }
   for (const wt of paths) {

@@ -48,9 +48,19 @@ export type AiHeroConfig = {
   trackVersions: boolean;
 };
 
+export type FeatureBranchNaming = 'semantic' | 'timestamp';
+
 export type GitPolicy = {
   baseBranch: string;
+  /** Legacy prefix when `featureBranchNaming` is `timestamp` (e.g. `sdlc/agent-`) */
   featureBranchPrefix: string;
+  /**
+   * `semantic` (default): `feat/short-slug-abc123` from the instruction.
+   * `timestamp`: legacy `featureBranchPrefix` + ISO stamp.
+   */
+  featureBranchNaming: FeatureBranchNaming;
+  /** Optional scope in semantic names → `feat/<scope>-slug-abc123` (omit for `feat/slug-abc123`) */
+  featureBranchScope: string;
   worktreesEnabled: boolean;
   worktreesDirectory: string;
   autoStage: boolean;
@@ -97,6 +107,12 @@ export type GitHubConfig = {
   labels: string[];
   /** Passed to gh pr create --label */
   autoLabel: boolean;
+  /** Refresh PR body with live pipeline checklist + AI Hero skill table */
+  prPipelineChecklist: boolean;
+  /** Post a short PR comment when a pipeline step succeeds (can be noisy — default false) */
+  prStepComments: boolean;
+  /** Write `.sdlc/last-error.json` and comment on the PR when the run fails */
+  notifyOnFailure: boolean;
   /** gh pr merge --admin is NEVER used */
   respectBranchProtection: true;
 };
@@ -217,6 +233,8 @@ export const sdlcConfig: SdlcConfig = {
   git: {
     baseBranch: 'main',
     featureBranchPrefix: 'sdlc/agent-',
+    featureBranchNaming: 'semantic',
+    featureBranchScope: '',
     worktreesEnabled: true,
     worktreesDirectory: '.sdlc-worktrees',
     autoStage: true,
@@ -248,6 +266,9 @@ export const sdlcConfig: SdlcConfig = {
     prBodyTemplate: '',
     labels: ['sdlc', 'automation'],
     autoLabel: true,
+    prPipelineChecklist: true,
+    prStepComments: false,
+    notifyOnFailure: true,
     respectBranchProtection: true,
   },
   docker: {

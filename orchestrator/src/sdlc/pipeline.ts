@@ -28,6 +28,11 @@ import { CommitMessageGenerator } from './commit-message-generator.js';
 import { buildCommitMessageWithSkills } from './commit-message-from-skills.js';
 import { ReportGenerator } from './report-generator.js';
 import { pruneStaleSdlcWorktrees } from './worktree-prune.js';
+import { PipelineProgress } from './pipeline-progress.js';
+import { buildSdlcPrBody } from './pr-body-builder.js';
+import { syncSdlcPrBody } from './sdlc-pr-sync.js';
+import { notifySdlcFailure } from './sdlc-notify.js';
+import { buildFeatureBranchName } from './feature-branch-name.js';
 import type { ExecutionReport, GateResult, SkillInvocation, WorkflowState } from './types.js';
 import { parseGitHubRepoFromUrl, resolveRemoteUrl } from '../gh-pr.js';
 import type { ReviewResult } from '../review-json.js';
@@ -328,7 +333,14 @@ export async function runSdlcFromArgv(argv: string[]): Promise<void> {
     return;
   }
 
-  await runFullPipeline(parsed, cfg, stateMgr);
+  try {
+    await runFullPipeline(parsed, cfg, stateMgr);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`\nSDLC failed: ${msg}\n`);
+    process.exitCode = 1;
+    throw e;
+  }
 }
 
 /**
@@ -378,8 +390,13 @@ async function runPublishOnlyPipeline(
   }
 
   const baseSha = execGit(activeRepoRoot, ['rev-parse', 'HEAD'], true).trim();
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const featureBranch = `${cfg.git.featureBranchPrefix}publish-${stamp}`;
+  const featureBranch = buildFeatureBranchName(instruction, {
+    naming: cfg.git.featureBranchNaming,
+    legacyPrefix: cfg.git.featureBranchPrefix,
+    scope: cfg.git.featureBranchScope,
+    publish: true,
+  });
+  step('git branch', featureBranch);
 
   execGit(activeRepoRoot, ['checkout', '-b', featureBranch]);
   const session: WorktreeSession = { path: activeRepoRoot, branch: featureBranch, mainRepoRoot: activeRepoRoot, baseSha };
@@ -625,9 +642,13 @@ async function runFullPipeline(
   step('git base', `Using base ${baseSha} (config baseBranch=${branchMgr.baseBranch})`);
   state.baseSha = baseSha;
 
-  const session = await gitWt.create(activeRepoRoot, baseSha);
+  const session = await gitWt.create(activeRepoRoot, baseSha, instruction);
+  step('git branch', session.branch);
   state.featureBranch = session.branch;
   await stateMgr.save(cfg.workflow.stateFile, state);
+
+  const progress = new PipelineProgress('full');
+  progress.mark('worktree', 'succeeded', session.branch);
 
   const gateResults: GateResult[] = [];
   const skillInvocations: SkillInvocation[] = [];
@@ -670,6 +691,7 @@ async function runFullPipeline(
     } else {
       step('sync from main checkout', 'Skipped (session path is main repo — already the same tree).');
     }
+    progress.mark('sync', 'succeeded');
 
     runInWorktree(session, 'npm', ['install']);
 
@@ -695,8 +717,16 @@ async function runFullPipeline(
       }
     } else {
       step('ai hero skills', 'Off (sdlc.features.json aiHeroSkills: false).');
+      progress.mark('skills', 'skipped', 'aiHeroSkills disabled');
     }
     const selected = discovered.filter(s => selectedIds.includes(s.id));
+    if (cfg.features.aiHeroSkills) {
+      progress.mark(
+        'skills',
+        'succeeded',
+        selectedIds.length ? selectedIds.join(', ') : 'no SKILL.md matches',
+      );
+    }
 
     const skillsBlock = formatSkillsForPrompt(selected);
     await mkdir(path.join(session.path, 'artifacts'), { recursive: true });
@@ -704,12 +734,14 @@ async function runFullPipeline(
     const planner = new ImplementationPlanner(client, model);
     const planMd = await planner.plan(instruction, selected, path.join(session.path, 'package.json'));
     await writeFile(path.join(session.path, 'artifacts', 'plan.md'), `# Plan\n\n${planMd}\n`);
+    progress.mark('plan', 'succeeded');
     state.phase = 'implement';
     await stateMgr.save(cfg.workflow.stateFile, state);
 
     if (!cfg.features.autoImplement) {
       implementationSummary = 'Auto-implement disabled (sdlc.features.json autoImplement: false); no code edits applied.';
       step('implement', implementationSummary);
+      progress.mark('implement', 'skipped', 'autoImplement false');
     } else {
       let implAttempt = 0;
       while (implAttempt < cfg.workflow.maxImplementationRetries) {
@@ -735,10 +767,12 @@ async function runFullPipeline(
         const buildTry = testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], cfg.qualityGates.build.timeoutMs);
         if (buildTry.ok) break;
         if (implAttempt >= cfg.workflow.maxImplementationRetries) {
+          progress.mark('implement', 'failed', `build failed after ${implAttempt} attempts`);
           throw new Error(`Implementation failed build after ${implAttempt} attempts: ${buildTry.output.slice(-2000)}`);
         }
       }
     }
+    progress.mark('implement', 'succeeded', implementationSummary.slice(0, 200) || 'done');
 
     state.phase = 'validate';
 
@@ -798,6 +832,14 @@ async function runFullPipeline(
       }),
     );
 
+    const mandatoryGateFailed = gateResults.some(g => g.mandatory && g.status === 'failed');
+    const gateDetail = gateResults.map(g => `${g.id}:${g.status}`).join(', ');
+    progress.mark(
+      'validate',
+      mandatoryGateFailed ? 'failed' : 'succeeded',
+      gateDetail.slice(0, 240) || 'gates complete',
+    );
+
     const gateSummary = gateResults
       .map(g => `- **${g.id}**: ${g.status}${g.mandatory ? ' (mandatory)' : ' (optional)'} — ${g.output.slice(0, 120)}…`)
       .join('\n');
@@ -838,24 +880,36 @@ async function runFullPipeline(
     let committed = false;
     if (!cfg.git.autoCommit) {
       step('git commit', 'Skipped (sdlc.features.json autoCommit: false). Changes may be uncommitted in the session directory.');
+      progress.mark('commit', 'skipped', 'autoCommit false');
     } else {
       committed = await gitCommitAll(session, title, commitBody);
-      if (!committed) step('git commit', 'No changes to commit after gates.');
+      if (!committed) {
+        step('git commit', 'No changes to commit after gates.');
+        progress.mark('commit', 'skipped', 'no diff');
+      } else {
+        progress.mark('commit', 'succeeded', title.slice(0, 120));
+      }
     }
     if (cfg.git.autoPush) {
       if (!cfg.git.autoCommit) {
         step('git push', 'Skipped (autoCommit is false in sdlc.features.json — commit locally before pushing).');
+        progress.mark('push', 'skipped', 'needs autoCommit');
       } else if (!committed) {
         step('git push', 'Skipped (no new commit).');
+        progress.mark('push', 'skipped', 'no commit');
       } else {
         try {
           gitPush(session);
+          progress.mark('push', 'succeeded', session.branch);
         } catch (e) {
-          step('git push', `Failed: ${e instanceof Error ? e.message : String(e)}`);
+          const pem = e instanceof Error ? e.message : String(e);
+          step('git push', `Failed: ${pem}`);
+          progress.mark('push', 'failed', pem.slice(0, 200));
         }
       }
     } else {
       step('git push', 'Skipped (sdlc.features.json autoPush: false).');
+      progress.mark('push', 'skipped', 'autoPush false');
     }
 
     const commitSha = execGit(session.path, ['rev-parse', 'HEAD']).trim();
@@ -864,20 +918,18 @@ async function runFullPipeline(
     state.phase = 'pr';
     await stateMgr.save(cfg.workflow.stateFile, state);
 
-    const prBodyDraft = [
-      `## Business requirement`,
+    const prBodyBase = {
       instruction,
-      ``,
-      `## Implementation summary`,
+      mode: 'full' as const,
+      progress,
+      selectedSkillIds: selectedIds,
+      skillInvocations,
       implementationSummary,
-      ``,
-      `## Quality gates`,
-      gateSummary,
-      `\n_Note: **skipped** or **failed** gates are not reported as passed. Mandatory gates must show **passed** to auto-merge (subject to GitHub branch protection)._\n`,
-      ``,
-      `## Files changed`,
-      changedFiles.map(f => `- \`${f}\``).join('\n') || diffStat,
-    ].join('\n');
+      gateResults,
+      changedFiles: changedFiles.length ? changedFiles : (diffStat ? [diffStat] : []),
+      featureBranch: session.branch,
+      commitSha,
+    };
 
     if (cfg.git.autoCreatePr) {
       if (!cfg.git.autoPush || !cfg.git.autoCommit) {
@@ -887,17 +939,29 @@ async function runFullPipeline(
         );
       } else if (!committed) {
         step('github', 'PR creation skipped: no commit was pushed.');
+        progress.mark('pr', 'skipped', 'no commit');
       } else {
-        const pr = await prMgr.createOrUpdate(session, instruction, prBodyDraft);
+        const pr = await prMgr.createOrUpdate(
+          session,
+          instruction,
+          buildSdlcPrBody({ ...prBodyBase, reviewText: undefined, mergeStatus: undefined }),
+        );
         prUrl = pr.prUrl;
         prNumber = pr.prNumber;
         state.prUrl = prUrl;
         state.prNumber = prNumber;
         step('github', pr.message);
+        if (pr.prNumber !== null) {
+          progress.mark('pr', 'succeeded', pr.prUrl ?? `PR #${pr.prNumber}`);
+          await syncSdlcPrBody(prMgr, cfg, session, prNumber, prBodyBase, 'pr');
+        } else {
+          progress.mark('pr', 'failed', pr.message.slice(0, 200));
+        }
         tryFastForwardMainCheckout(cfg, 'afterPr', 'after PR opened — local main may include merge');
       }
     } else {
       step('github', 'PR creation skipped (sdlc.features.json autoPr: false).');
+      progress.mark('pr', 'skipped', 'autoPr false');
     }
 
     state.phase = 'review';
@@ -937,11 +1001,25 @@ async function runFullPipeline(
         }
       }
 
-      const fullPr =
-        prBodyDraft +
-        `\n\n## AI Hero code review\n\n${reviewText || 'No findings.'}\n\n## Log (tail)\n\n${logLines.slice(-30).join('\n')}`;
+      const reviewOk = !blockingReviewFindings(lastReview);
+      progress.mark(
+        'review',
+        reviewOk ? 'succeeded' : 'failed',
+        reviewOk ? 'no blocking findings' : 'critical/high findings remain',
+      );
       if (prNumber !== null) {
-        await prMgr.updateBody(session, fullPr);
+        await syncSdlcPrBody(
+          prMgr,
+          cfg,
+          session,
+          prNumber,
+          {
+            ...prBodyBase,
+            reviewText: `${reviewText || 'No findings.'}\n\n## Log (tail)\n\n${logLines.slice(-30).join('\n')}`,
+            mergeStatus: undefined,
+          },
+          'review',
+        );
       } else {
         step('github', 'PR description update skipped (no PR number).');
       }
@@ -955,8 +1033,13 @@ async function runFullPipeline(
       } else {
         reviewText = 'AI review skipped.';
       }
+      progress.mark('review', 'skipped', reviewText.slice(0, 120));
       if (prNumber !== null) {
-        await prMgr.updateBody(session, prBodyDraft + `\n\n## AI Hero code review\n\n${reviewText}\n`);
+        await syncSdlcPrBody(prMgr, cfg, session, prNumber, {
+          ...prBodyBase,
+          reviewText,
+          mergeStatus: undefined,
+        });
       }
     }
 
@@ -982,11 +1065,15 @@ async function runFullPipeline(
 
     if (canMerge) {
       let syncOk = true;
+      progress.markRunning('pre-merge-sync');
       try {
         syncFeatureBranchWithRemoteBase(session, cfg.git.baseBranch);
+        progress.mark('pre-merge-sync', 'succeeded');
       } catch (e) {
         syncOk = false;
-        mergeStatus = `Pre-merge sync failed: ${e instanceof Error ? e.message : String(e)}`;
+        const pem = e instanceof Error ? e.message : String(e);
+        mergeStatus = `Pre-merge sync failed: ${pem}`;
+        progress.mark('pre-merge-sync', 'failed', pem.slice(0, 200));
         state.mergeAttempted = true;
         state.mergeSucceeded = false;
       }
@@ -995,6 +1082,7 @@ async function runFullPipeline(
         mergeStatus = mr.ok ? 'merged (requested via gh; may be queued pending CI / branch protection)' : mr.message;
         state.mergeAttempted = true;
         state.mergeSucceeded = mr.ok;
+        progress.mark('merge', mr.ok ? 'succeeded' : 'failed', mergeStatus.slice(0, 200));
         if (mr.ok) {
           tryFastForwardMainCheckout(cfg, 'afterMerge', 'after merge on remote — update local main');
           resetMainCheckoutToOriginAfterMerge(cfg);
@@ -1020,6 +1108,18 @@ async function runFullPipeline(
     } else {
       mergeStatus = 'Merge skipped (policy).';
     }
+    if (!canMerge) {
+      progress.mark('pre-merge-sync', 'skipped', 'merge not attempted');
+      progress.mark('merge', 'skipped', mergeStatus.slice(0, 200));
+    }
+
+    if (prNumber !== null) {
+      await syncSdlcPrBody(prMgr, cfg, session, prNumber, {
+        ...prBodyBase,
+        reviewText,
+        mergeStatus,
+      });
+    }
 
     state.phase = 'deploy';
     await stateMgr.save(cfg.workflow.stateFile, state);
@@ -1034,6 +1134,8 @@ async function runFullPipeline(
       healthResults.push(...dockerMgr.healthChecks());
       state.deployAttempted = true;
       deployAttempted = true;
+      const deployOk = dep.ok && !healthResults.some(x => !x.ok);
+      progress.mark('deploy', deployOk ? 'succeeded' : 'failed', deployStatus.slice(0, 200));
       if (healthResults.some(x => !x.ok) && cfg.docker.rollbackOnFailedHealth) {
         rollbackStatus = rollbackMgr.down(activeRepoRoot);
       }
@@ -1042,6 +1144,15 @@ async function runFullPipeline(
         cfg.docker.enabled && state.mergeSucceeded
           ? 'Skipped: set autoDeployLocal in sdlc.features.json or SDLC_DEPLOY_LOCAL=1 to run compose after merge.'
           : 'Skipped (merge not succeeded or Docker disabled).';
+      progress.mark('deploy', 'skipped', deployStatus.slice(0, 200));
+    }
+
+    if (prNumber !== null) {
+      await syncSdlcPrBody(prMgr, cfg, session, prNumber, {
+        ...prBodyBase,
+        reviewText,
+        mergeStatus,
+      });
     }
 
     state.phase = 'done';
@@ -1095,6 +1206,26 @@ async function runFullPipeline(
             ? `Deploy/health: ${deployStatus.slice(0, 400)}`
             : undefined,
     };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const remote = resolveRemoteUrl(session);
+    const repoIds = remote ? parseGitHubRepoFromUrl(remote) : null;
+    const owner = process.env.GITHUB_OWNER ?? repoIds?.owner ?? null;
+    const repo = process.env.GITHUB_REPO ?? repoIds?.repo ?? null;
+    if (cfg.github.notifyOnFailure !== false) {
+      await notifySdlcFailure({
+        repoRoot: activeRepoRoot,
+        session,
+        owner,
+        repo,
+        prNumber,
+        prUrl,
+        instruction,
+        error: msg,
+        progress,
+      });
+    }
+    throw e;
   } finally {
     await gitWt.remove(session, origBranch);
     alignMainCheckoutWithRemote(cfg);
