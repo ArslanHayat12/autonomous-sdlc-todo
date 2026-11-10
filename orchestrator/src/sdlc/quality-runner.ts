@@ -1,6 +1,7 @@
 import { execFileSync, execSync } from 'node:child_process';
 import type { QualityGatesConfig, GatePolicy } from '../../sdlc.config.js';
 import type { GateResult } from './types.js';
+import { sdlcChildProcessEnv } from './worktree-env.js';
 
 function now(): number {
   return Date.now();
@@ -20,7 +21,7 @@ export class TestRunner {
         encoding: 'utf8',
         maxBuffer: 32 * 1024 * 1024,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: process.env,
+        env: sdlcChildProcessEnv(),
         timeout: timeoutMs,
       });
       return { ok: true, output: String(out) };
@@ -42,7 +43,7 @@ export class TestRunner {
         encoding: 'utf8',
         maxBuffer: 32 * 1024 * 1024,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: process.env,
+        env: sdlcChildProcessEnv(),
         timeout: timeoutMs,
         shell,
       });

@@ -22,7 +22,7 @@ export class AgentExecutor {
     const system = `You implement repository changes. Output ONLY valid JSON with shape:
 {"summary":"short","patches":[{"path":"relative/path.ts","content":"full new file content"}]}
 Paths must be repo-relative forward slashes.
-Patches MUST keep \`npm run build\` passing (strict TypeScript). For Express 5, \`req.params.*\` is \`string | string[]\` — use \`routeParam\` from apps/api/src/route-params.ts when touching API routes. After \`parseTitle\`, narrow with \`if (!parsed.ok) return\` then destructure \`const { title } = parsed\`.`;
+Patches MUST keep \`npm run build\` and \`npx playwright test\` passing (see tests/todo.spec.ts — add/complete/filter/delete flow). For Express 5, \`req.params.*\` is \`string | string[]\` — use \`routeParam\` from apps/api/src/route-params.ts when touching API routes. After \`parseTitle\`, narrow with \`if (!parsed.ok) return\` then destructure \`const { title } = parsed\`.`;
 
     const buildBlock = ctx.buildFeedback?.trim()
       ? `\n\nPrevious build FAILED — fix these errors in your patches:\n\`\`\`\n${ctx.buildFeedback.slice(-4000)}\n\`\`\`\n`

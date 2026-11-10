@@ -9,6 +9,8 @@
     "build": "npm --workspace apps/api run build && npm --workspace apps/web run build && npm --workspace orchestrator run build",
     "test:orchestrator": "npm --workspace orchestrator run test",
     "test:e2e": "playwright test",
+    "precommit:check": "node scripts/pre-commit-check.mjs",
+    "prepare": "husky",
     "sdlc": "npm --workspace orchestrator run sdlc",
     "sdlc:auto": "node scripts/sdlc-auto.mjs",
     "sdlc:publish": "node scripts/sdlc-publish-auto.mjs",
@@ -24,6 +26,7 @@
   "devDependencies": {
     "@playwright/test": "^1.56.1",
     "concurrently": "^9.2.1",
+    "husky": "^9.1.7",
     "typescript": "^5.9.3"
   }
 }

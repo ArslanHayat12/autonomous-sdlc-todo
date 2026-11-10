@@ -47,6 +47,9 @@ import type { ReviewResult } from '../review-json.js';
 import type { SdlcConfigWithFeatures } from './feature-flags.js';
 import { resolveMonorepoRoot, resolvePrimarySyncSourceRoot } from './repo-root.js';
 import { bootstrapSdlcEnv, warnIfMissingOpenAiKey } from '../bootstrap-env.js';
+import { mandatoryGateFailureMessage, mandatoryGatesFailed } from './mandatory-gates.js';
+import { ensurePlaywrightChromium, runPlaywrightE2e } from './playwright-gate.js';
+import { sdlcChildProcessEnv } from './worktree-env.js';
 
 /** Set at each CLI/worker entry (honors `SDLC_REPO_ROOT`, `SDLC_PRIMARY_REPO_ROOT`). */
 let activeRepoRoot = resolveMonorepoRoot();
@@ -76,7 +79,7 @@ function runInWorktree(session: WorktreeSession, command: string, args: string[]
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: sdlcChildProcessEnv(),
   });
 }
 
@@ -449,18 +452,6 @@ async function runPublishOnlyPipeline(
   const gateResults: GateResult[] = [];
 
   try {
-    let committed = false;
-    if (!cfg.git.autoCommit) {
-      step('git commit', 'Skipped (autoCommit false).');
-    } else {
-      committed = await gitCommitAll(session, title, body);
-    }
-    if (!committed) {
-      step('publish', 'No commit created — aborting.');
-      process.exitCode = 1;
-      return;
-    }
-
     state.phase = 'validate';
     await stateMgr.save(cfg.workflow.stateFile, state);
 
@@ -475,22 +466,38 @@ async function runPublishOnlyPipeline(
           Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'security'], p.timeoutMs)),
         ),
       );
-      if (cfg.qualityGates.e2e.enabled && process.env.SDLC_SKIP_PLAYWRIGHT !== '1') {
-        runInWorktree(session, 'npx', ['playwright', 'install', 'chromium']);
+      if (cfg.qualityGates.e2e.enabled) {
+        ensurePlaywrightChromium(session, runInWorktree);
       }
       gateResults.push(
         await gateOrch.runGate('e2e', session.path, async () => {
           if (!cfg.qualityGates.e2e.enabled) {
             return { ok: false, output: 'e2e disabled in sdlc.config.ts (not executed).' };
           }
-          if (process.env.SDLC_SKIP_PLAYWRIGHT === '1') {
-            return { ok: false, output: 'Skipped via SDLC_SKIP_PLAYWRIGHT=1 (not counted as passed).' };
-          }
-          return testRunner.runInWorktree(session.path, 'npx', ['playwright', 'test'], cfg.qualityGates.e2e.timeoutMs);
+          return runPlaywrightE2e(testRunner, session.path, cfg.qualityGates.e2e.timeoutMs);
         }),
       );
     } else {
       step('quality gates', 'Skipped (sdlc.features.json qualityGates: false).');
+    }
+
+    if (mandatoryGatesFailed(gateResults)) {
+      const msg = mandatoryGateFailureMessage(gateResults);
+      step('git commit', msg);
+      process.exitCode = 1;
+      return;
+    }
+
+    let committed = false;
+    if (!cfg.git.autoCommit) {
+      step('git commit', 'Skipped (autoCommit false).');
+    } else {
+      committed = await gitCommitAll(session, title, body);
+    }
+    if (!committed) {
+      step('publish', 'No commit created — aborting.');
+      process.exitCode = 1;
+      return;
     }
 
     const { files: changedFiles } = commitGen.describeDiff(session.path);
@@ -732,7 +739,15 @@ async function runFullPipeline(
     }
     progress.mark('sync', 'succeeded');
 
-    runInWorktree(session, 'npm', ['install']);
+    step('npm install', 'Worktree dependencies (`npm install --ignore-scripts`) — usually 30–90s…');
+    try {
+      runInWorktree(session, 'npm', ['install', '--ignore-scripts']);
+      step('npm install', 'Done.');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      step('npm install', `Failed: ${msg.slice(0, 400)}`);
+      throw e;
+    }
 
     let selectedIds: string[] = [];
     let discovered: HeroSkill[] = [];
@@ -770,32 +785,40 @@ async function runFullPipeline(
     const skillsBlock = formatSkillsForPrompt(selected);
     await mkdir(path.join(session.path, 'artifacts'), { recursive: true });
 
+    progress.markRunning('plan', 'OpenAI planning…');
+    step('plan', 'Calling OpenAI for implementation plan (up to ~2 min)…');
     const planner = new ImplementationPlanner(client, model);
     const planMd = await planner.plan(instruction, selected, path.join(session.path, 'package.json'));
+    step('plan', 'Plan received.');
     await writeFile(path.join(session.path, 'artifacts', 'plan.md'), `# Plan\n\n${planMd}\n`);
     progress.mark('plan', 'succeeded');
     state.phase = 'implement';
     await stateMgr.save(cfg.workflow.stateFile, state);
 
+    let implementE2ePassed = false;
     if (!cfg.features.autoImplement) {
       implementationSummary = 'Auto-implement disabled (sdlc.features.json autoImplement: false); no code edits applied.';
       step('implement', implementationSummary);
       progress.mark('implement', 'skipped', 'autoImplement false');
     } else {
       let implAttempt = 0;
-      let lastBuildOutput = '';
+      let lastGateFeedback = '';
       while (implAttempt < cfg.workflow.maxImplementationRetries) {
         implAttempt++;
         if (client) {
+          step('implement', `Attempt ${implAttempt}/${cfg.workflow.maxImplementationRetries} — OpenAI code patches…`);
           const agent = new AgentExecutor(client, model);
           const implPaths = resolveImplementationPaths(cfg.project);
           const withRouteHelper = implPaths.includes('apps/api/src/route-params.ts')
             ? implPaths
             : [...implPaths, 'apps/api/src/route-params.ts'];
+          const withTests = withRouteHelper.includes('tests/todo.spec.ts')
+            ? withRouteHelper
+            : [...withRouteHelper, 'tests/todo.spec.ts', 'playwright.config.ts'];
           const r = await agent.implement(instruction, {
-            paths: [...new Set(withRouteHelper)],
+            paths: [...new Set(withTests)],
             repoRoot: session.path,
-            buildFeedback: implAttempt > 1 ? lastBuildOutput : undefined,
+            buildFeedback: implAttempt > 1 ? lastGateFeedback : undefined,
           });
           await agent.apply(session.path, r.patches);
           implementationSummary = r.summary;
@@ -809,46 +832,79 @@ async function runFullPipeline(
             implementationSummary = 'No OPENAI_API_KEY: skipped automated code edits.';
           }
         }
+        step('build', 'Running `npm run build` in worktree…');
         const buildTry = testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], cfg.qualityGates.build.timeoutMs);
-        lastBuildOutput = buildTry.output;
-        if (buildTry.ok) break;
+        lastGateFeedback = buildTry.output;
+        let implGatesOk = buildTry.ok;
+        if (implGatesOk && cfg.features.qualityGates && cfg.qualityGates.e2e.enabled) {
+          step(
+            'e2e',
+            'Running Playwright (`tests/todo.spec.ts`) — starts API + web; often 1–3 min, no output until finish…',
+          );
+          ensurePlaywrightChromium(session, runInWorktree);
+          const e2eTry = runPlaywrightE2e(testRunner, session.path, cfg.qualityGates.e2e.timeoutMs);
+          step('e2e', e2eTry.ok ? 'Playwright passed.' : 'Playwright failed (see retry or error).');
+          lastGateFeedback = e2eTry.output;
+          implGatesOk = e2eTry.ok;
+          if (e2eTry.ok) implementE2ePassed = true;
+        }
+        if (implGatesOk) break;
         if (implAttempt >= cfg.workflow.maxImplementationRetries) {
-          progress.mark('implement', 'failed', `build failed after ${implAttempt} attempts`);
-          throw new Error(`Implementation failed build after ${implAttempt} attempts: ${buildTry.output.slice(-2000)}`);
+          progress.mark('implement', 'failed', `build/e2e failed after ${implAttempt} attempts`);
+          throw new Error(
+            `Implementation failed build/e2e after ${implAttempt} attempts: ${lastGateFeedback.slice(-2000)}`,
+          );
         }
       }
     }
     progress.mark('implement', 'succeeded', implementationSummary.slice(0, 200) || 'done');
 
     state.phase = 'validate';
+    progress.markRunning('validate', 'gates before commit');
+    step('validate', 'Running quality gates before commit (build, audit, e2e, …)…');
 
+    const implRanE2e =
+      cfg.features.autoImplement && cfg.features.qualityGates && cfg.qualityGates.e2e.enabled && implementE2ePassed;
+
+    step('validate', 'Gate: build…');
     gateResults.push(
       await gateOrch.runGate('build', session.path, async p =>
         Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], p.timeoutMs)),
       ),
     );
 
+    step('validate', 'Gate: dependency audit…');
     gateResults.push(
       await gateOrch.runGate('dependencyAudit', session.path, async p =>
         Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'security'], p.timeoutMs)),
       ),
     );
 
-    if (cfg.qualityGates.e2e.enabled && process.env.SDLC_SKIP_PLAYWRIGHT !== '1') {
-      runInWorktree(session, 'npx', ['playwright', 'install', 'chromium']);
+    step(
+      'validate',
+      implRanE2e
+        ? 'Gate: e2e — reusing Playwright pass from implement step (skip duplicate run).'
+        : 'Gate: e2e — Playwright (1–3 min if not already run)…',
+    );
+    if (cfg.qualityGates.e2e.enabled && !implRanE2e) {
+      ensurePlaywrightChromium(session, runInWorktree);
     }
     gateResults.push(
       await gateOrch.runGate('e2e', session.path, async () => {
         if (!cfg.qualityGates.e2e.enabled) {
           return { ok: false, output: 'e2e disabled in sdlc.config.ts (not executed).' };
         }
-        if (process.env.SDLC_SKIP_PLAYWRIGHT === '1') {
-          return { ok: false, output: 'Skipped via SDLC_SKIP_PLAYWRIGHT=1 (not counted as passed).' };
+        if (implRanE2e) {
+          return {
+            ok: true,
+            output: 'Playwright already passed in implement loop (skipped duplicate before commit).',
+          };
         }
-        return testRunner.runInWorktree(session.path, 'npx', ['playwright', 'test'], cfg.qualityGates.e2e.timeoutMs);
+        return runPlaywrightE2e(testRunner, session.path, cfg.qualityGates.e2e.timeoutMs);
       }),
     );
 
+    step('validate', 'Gate: DAST HTTP smoke (curl)…');
     gateResults.push(
       await gateOrch.runGate('dast', session.path, async () => {
         if (!cfg.qualityGates.dast.enabled) {
@@ -867,6 +923,9 @@ async function runFullPipeline(
       }),
     );
 
+    if (cfg.qualityGates.dockerBuild.enabled) {
+      step('validate', 'Gate: docker compose build (optional; may take several minutes)…');
+    }
     gateResults.push(
       await gateOrch.runGate('dockerBuild', activeRepoRoot, async () => {
         if (!cfg.qualityGates.dockerBuild.enabled) {
@@ -878,13 +937,19 @@ async function runFullPipeline(
       }),
     );
 
-    const mandatoryGateFailed = gateResults.some(g => g.mandatory && g.status === 'failed');
+    const mandatoryGateFailed = mandatoryGatesFailed(gateResults);
     const gateDetail = gateResults.map(g => `${g.id}:${g.status}`).join(', ');
     progress.mark(
       'validate',
       mandatoryGateFailed ? 'failed' : 'succeeded',
       gateDetail.slice(0, 240) || 'gates complete',
     );
+    if (mandatoryGateFailed) {
+      const msg = mandatoryGateFailureMessage(gateResults);
+      step('validate', msg);
+      progress.mark('commit', 'skipped', 'mandatory gates failed');
+      throw new Error(`${msg}\n${gateResults.find(g => g.mandatory && g.status === 'failed')?.output.slice(-1500) ?? ''}`);
+    }
 
     const gateSummary = gateResults
       .map(g => `- **${g.id}**: ${g.status}${g.mandatory ? ' (mandatory)' : ' (optional)'} — ${g.output.slice(0, 120)}…`)
@@ -905,6 +970,9 @@ async function runFullPipeline(
 
     const useSkillCommit =
       Boolean(client) && cfg.features.aiHeroSkills && cfg.features.autoCommitMessageFromSkills && selectedIds.length > 0;
+    if (useSkillCommit) {
+      step('commit message', 'Calling OpenAI for conventional commit (Hero skills)…');
+    }
     const { title, body: commitBody } = useSkillCommit
       ? await buildCommitMessageWithSkills({
           client,
