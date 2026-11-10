@@ -24,6 +24,7 @@ export class CodeReviewOrchestrator {
     const system = `Strict reviewer. Output ONLY JSON:
 {"findings":[{"severity":"critical|high|medium|low","file":"path","issue":"...","fix":"..."}],"needsMoreChanges":true|false,"patches":[{"path":"rel","content":"..."}]}
 Critical/high must block merge unless fixed.
+If you emit patches: they MUST be complete valid file contents, only for paths you were shown, and MUST keep \`npm run build\` passing (strict TypeScript). Prefer findings without patches when unsure.
 
 ## Skills context
 ${skillsBlock}`;
