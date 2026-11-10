@@ -216,20 +216,20 @@
   resolved "https://registry.npmjs.org/@rollup/rollup-darwin-arm64/-/rollup-darwin-arm64-4.67.5.tgz"
   integrity sha512-SNamgdrY69oPdBrQV9fKGo6PSmKcVhyn0D0jnDmcqgRJvrxQGGBhtekOHTUJ7TCgkW0nE8XMH9v2CwXmjNIzVA==
 
-"@todo/api@file:/Users/arslan/Downloads/autonomous-sdlc-todo/.sdlc-worktrees/feat__analyze-the-todo-app-and-propose-one-small-5d5c84/apps/api":
+"@todo/api@file:/Users/arslan/Downloads/autonomous-sdlc-todo/.sdlc-worktrees/feat__analyze-the-todo-app-and-propose-one-small-ccbd9f/apps/api":
   version "1.0.0"
   resolved "file:apps/api"
   dependencies:
     cors "^2.8.5"
     express "^5.1.0"
 
-"@todo/orchestrator@file:/Users/arslan/Downloads/autonomous-sdlc-todo/.sdlc-worktrees/feat__analyze-the-todo-app-and-propose-one-small-5d5c84/orchestrator":
+"@todo/orchestrator@file:/Users/arslan/Downloads/autonomous-sdlc-todo/.sdlc-worktrees/feat__analyze-the-todo-app-and-propose-one-small-ccbd9f/orchestrator":
   version "1.0.0"
   resolved "file:orchestrator"
   dependencies:
     openai "^5.20.0"
 
-"@todo/web@file:/Users/arslan/Downloads/autonomous-sdlc-todo/.sdlc-worktrees/feat__analyze-the-todo-app-and-propose-one-small-5d5c84/apps/web":
+"@todo/web@file:/Users/arslan/Downloads/autonomous-sdlc-todo/.sdlc-worktrees/feat__analyze-the-todo-app-and-propose-one-small-ccbd9f/apps/web":
   version "1.0.0"
   resolved "file:apps/web"
   dependencies:
