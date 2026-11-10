@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatStepBullet, stripAnsi } from './sdlc-log.js';
+import { categoryFromStepName, formatStepBullet, stripAnsi } from './sdlc-log.js';
+
+test('categoryFromStepName maps git vs github vs ai', () => {
+  assert.equal(categoryFromStepName('git branch'), 'git');
+  assert.equal(categoryFromStepName('github'), 'github');
+  assert.equal(categoryFromStepName('openai'), 'ai');
+  assert.equal(categoryFromStepName('quality gates'), 'quality');
+});
 
 test('formatStepBullet uses bullets without ANSI when SDLC_NO_COLOR=1', () => {
   const prev = process.env.SDLC_NO_COLOR;
