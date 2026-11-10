@@ -13,7 +13,8 @@
     "review": true,
     "reviewAutoFix": true,
     "reviewPrComments": true,
-    "commitMessageFromSkills": true
+    "commitMessageFromSkills": true,
+    "compactPrompts": true
   },
   "git": {
     "isolatedWorktree": true,

@@ -33,6 +33,8 @@ import { buildSdlcPrBody } from './pr-body-builder.js';
 import { syncSdlcPrBody } from './sdlc-pr-sync.js';
 import { postAiReviewOnPullRequest } from './review-pr-comments.js';
 import { reviewAutoFixEnabled, reviewPrCommentsEnabled } from './review-options.js';
+import { resolvePromptBudget } from './prompt-budget.js';
+import { installWorktreeDependencies } from './worktree-install.js';
 import { notifySdlcFailure } from './sdlc-notify.js';
 import { buildFeatureBranchName } from './feature-branch-name.js';
 import {
@@ -636,6 +638,7 @@ async function runFullPipeline(
   const aiPm = new AIProviderManager(cfg.ai);
   const client = aiPm.createClient();
   const model = aiPm.model();
+  const promptBudget = resolvePromptBudget(cfg.ai, cfg.features.aiCompactPrompts);
   step(
     'openai',
     client
@@ -733,18 +736,40 @@ async function runFullPipeline(
     }
     progress.mark('sync', 'succeeded');
 
-    runInWorktree(session, 'npm', ['install']);
+    step(
+      'npm install (worktree)',
+      process.env.SDLC_SKIP_WORKTREE_NPM_INSTALL === '1'
+        ? 'Skipped (SDLC_SKIP_WORKTREE_NPM_INSTALL=1).'
+        : 'Installing workspace dependencies (often 1–3 min; no output until finished)…',
+    );
+    if (process.env.SDLC_SKIP_WORKTREE_NPM_INSTALL !== '1') {
+      const inst = installWorktreeDependencies(session);
+      if (!inst.ok) {
+        progress.mark('npm-install', 'failed', inst.output.slice(0, 200));
+        throw new Error(`npm install failed in worktree (${Math.round(inst.ms / 1000)}s): ${inst.output.slice(-2500)}`);
+      }
+      step(
+        'npm install (worktree)',
+        `Done in ${(inst.ms / 1000).toFixed(1)}s${process.env.SDLC_NPM_INSTALL_FULL === '1' ? '' : ' (--ignore-scripts; SDLC_NPM_INSTALL_FULL=1 for full install)'}.`,
+      );
+      progress.mark('npm-install', 'succeeded', `${Math.round(inst.ms / 1000)}s`);
+    } else {
+      progress.mark('npm-install', 'skipped', 'SDLC_SKIP_WORKTREE_NPM_INSTALL');
+    }
 
     let selectedIds: string[] = [];
     let discovered: HeroSkill[] = [];
     if (cfg.features.aiHeroSkills) {
+      step('ai hero skills', 'Discovering skills/*/SKILL.md…');
       const registry = new AIHeroSkillRegistry(session.path, cfg.aiHero);
       discovered = await registry.discover();
       const installInv = await registry.ensureOfficialCatalogIfRequested();
       if (installInv) skillInvocations.push(installInv);
 
       const router = new SkillRouter(cfg.aiHero);
-      const selected = router.selectForInstruction(instruction, discovered);
+      const selected = router
+        .selectForInstruction(instruction, discovered)
+        .slice(0, promptBudget.maxSkillsInPrompt);
       selectedIds = selected.map(s => s.id);
       for (const v of registry.validate(selectedIds)) {
         skillInvocations.push({
@@ -761,6 +786,14 @@ async function runFullPipeline(
     }
     const selected = discovered.filter(s => selectedIds.includes(s.id));
     if (cfg.features.aiHeroSkills) {
+      step(
+        'ai hero skills',
+        selectedIds.length
+          ? `Selected ${selectedIds.length}: ${selectedIds.join(', ')}`
+          : discovered.length
+            ? 'No SKILL.md matched instruction keywords — continuing without skill text.'
+            : 'No skills/ catalog found in worktree.',
+      );
       progress.mark(
         'skills',
         'succeeded',
@@ -768,11 +801,32 @@ async function runFullPipeline(
       );
     }
 
-    const skillsBlock = formatSkillsForPrompt(selected);
+    const skillsBlock = formatSkillsForPrompt(selected, {
+      maxCharsPerSkill: promptBudget.maxCharsPerSkill,
+      maxSkills: promptBudget.maxSkillsInPrompt,
+    });
     await mkdir(path.join(session.path, 'artifacts'), { recursive: true });
 
     const planner = new ImplementationPlanner(client, model);
-    const planMd = await planner.plan(instruction, selected, path.join(session.path, 'package.json'));
+    const manifestMax = cfg.features.aiCompactPrompts ? 2_000 : 4_000;
+    if (process.env.SDLC_SKIP_PLAN === '1') {
+      step('plan', 'Skipped (SDLC_SKIP_PLAN=1).');
+    } else if (client) {
+      step('plan', `Calling OpenAI (${model}) for implementation plan…`);
+    } else {
+      step('plan', 'Offline plan (no OpenAI client).');
+    }
+    const planMd =
+      process.env.SDLC_SKIP_PLAN === '1'
+        ? [
+            '# Plan (skipped)',
+            '',
+            `- Instruction: ${instruction}`,
+            `- Skills: ${selected.map(s => s.id).join(', ') || 'none'}`,
+            '- Unset SDLC_SKIP_PLAN to enable OpenAI planning (saves one API call).',
+          ].join('\n')
+        : await planner.plan(instruction, selected, path.join(session.path, 'package.json'), manifestMax);
+    step('plan', `Wrote artifacts/plan.md (${planMd.length} chars).`);
     await writeFile(path.join(session.path, 'artifacts', 'plan.md'), `# Plan\n\n${planMd}\n`);
     progress.mark('plan', 'succeeded');
     state.phase = 'implement';
@@ -788,6 +842,10 @@ async function runFullPipeline(
       while (implAttempt < cfg.workflow.maxImplementationRetries) {
         implAttempt++;
         if (client) {
+          step(
+            'implement',
+            `Attempt ${implAttempt}/${cfg.workflow.maxImplementationRetries}: OpenAI code patches + build check…`,
+          );
           const agent = new AgentExecutor(client, model);
           const implPaths = resolveImplementationPaths(cfg.project);
           const withRouteHelper = implPaths.includes('apps/api/src/route-params.ts')
@@ -797,6 +855,8 @@ async function runFullPipeline(
             paths: [...new Set(withRouteHelper)],
             repoRoot: session.path,
             buildFeedback: implAttempt > 1 ? lastBuildOutput : undefined,
+            maxCharsPerFile: promptBudget.maxCharsPerFile,
+            maxBuildFeedbackChars: promptBudget.maxBuildFeedbackChars,
           });
           await agent.apply(session.path, r.patches);
           implementationSummary = r.summary;
@@ -823,61 +883,73 @@ async function runFullPipeline(
 
     state.phase = 'validate';
 
-    gateResults.push(
-      await gateOrch.runGate('build', session.path, async p =>
-        Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], p.timeoutMs)),
-      ),
-    );
+    if (!cfg.features.qualityGates) {
+      step('quality gates', 'Skipped (sdlc.features.json quality.gatesInWorktree: false).');
+      progress.mark('validate', 'skipped', 'qualityGates false');
+    } else {
+      step('quality gates', 'Running build, audit, e2e, and optional gates (can take several minutes)…');
+      gateResults.push(
+        await gateOrch.runGate('build', session.path, async p => {
+          step('gate build', `npm run build (timeout ${Math.round(p.timeoutMs / 1000)}s)…`);
+          const r = await Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'build'], p.timeoutMs));
+          step('gate build', r.ok ? 'Passed.' : `Failed — ${r.output.slice(-400)}`);
+          return r;
+        }),
+      );
 
-    gateResults.push(
-      await gateOrch.runGate('dependencyAudit', session.path, async p =>
-        Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'security'], p.timeoutMs)),
-      ),
-    );
+      gateResults.push(
+        await gateOrch.runGate('dependencyAudit', session.path, async p =>
+          Promise.resolve(testRunner.runInWorktree(session.path, 'npm', ['run', 'security'], p.timeoutMs)),
+        ),
+      );
 
-    if (cfg.qualityGates.e2e.enabled && process.env.SDLC_SKIP_PLAYWRIGHT !== '1') {
-      runInWorktree(session, 'npx', ['playwright', 'install', 'chromium']);
+      if (cfg.qualityGates.e2e.enabled && process.env.SDLC_SKIP_PLAYWRIGHT !== '1') {
+        step('gate e2e', 'Installing Playwright chromium (first run can take 1–2 min)…');
+        runInWorktree(session, 'npx', ['playwright', 'install', 'chromium']);
+        step('gate e2e', 'Running Playwright tests…');
+      }
+      gateResults.push(
+        await gateOrch.runGate('e2e', session.path, async () => {
+          if (!cfg.qualityGates.e2e.enabled) {
+            return { ok: false, output: 'e2e disabled in sdlc.config.ts (not executed).' };
+          }
+          if (process.env.SDLC_SKIP_PLAYWRIGHT === '1') {
+            return { ok: false, output: 'Skipped via SDLC_SKIP_PLAYWRIGHT=1 (not counted as passed).' };
+          }
+          return testRunner.runInWorktree(session.path, 'npx', ['playwright', 'test'], cfg.qualityGates.e2e.timeoutMs);
+        }),
+      );
+
+      gateResults.push(
+        await gateOrch.runGate('dast', session.path, async () => {
+          if (!cfg.qualityGates.dast.enabled) {
+            return { ok: false, output: 'DAST disabled in sdlc.config.ts (not executed).' };
+          }
+          try {
+            execFileSync('curl', ['-sf', 'http://127.0.0.1:4000/health'], { timeout: 5000 });
+            execFileSync('curl', ['-sf', 'http://127.0.0.1:4000/api/todos'], { timeout: 5000 });
+            return { ok: true, output: 'GET /health and /api/todos OK (local smoke).' };
+          } catch (e) {
+            return {
+              ok: false,
+              output: `DAST smoke failed (start dev servers or disable dast): ${String((e as Error).message)}`,
+            };
+          }
+        }),
+      );
+
+      gateResults.push(
+        await gateOrch.runGate('dockerBuild', activeRepoRoot, async () => {
+          if (!cfg.qualityGates.dockerBuild.enabled) {
+            return { ok: false, output: 'docker build gate disabled (not executed).' };
+          }
+          step('gate docker', 'docker build (may take several minutes)…');
+          const short = execGit(session.path, ['rev-parse', '--short', 'HEAD']).trim();
+          dockerTag = cfg.docker.imageTagTemplate.replace('{{shortSha}}', short);
+          return dockerMgr.build(activeRepoRoot, dockerTag);
+        }),
+      );
     }
-    gateResults.push(
-      await gateOrch.runGate('e2e', session.path, async () => {
-        if (!cfg.qualityGates.e2e.enabled) {
-          return { ok: false, output: 'e2e disabled in sdlc.config.ts (not executed).' };
-        }
-        if (process.env.SDLC_SKIP_PLAYWRIGHT === '1') {
-          return { ok: false, output: 'Skipped via SDLC_SKIP_PLAYWRIGHT=1 (not counted as passed).' };
-        }
-        return testRunner.runInWorktree(session.path, 'npx', ['playwright', 'test'], cfg.qualityGates.e2e.timeoutMs);
-      }),
-    );
-
-    gateResults.push(
-      await gateOrch.runGate('dast', session.path, async () => {
-        if (!cfg.qualityGates.dast.enabled) {
-          return { ok: false, output: 'DAST disabled in sdlc.config.ts (not executed).' };
-        }
-        try {
-          execFileSync('curl', ['-sf', 'http://127.0.0.1:4000/health'], { timeout: 5000 });
-          execFileSync('curl', ['-sf', 'http://127.0.0.1:4000/api/todos'], { timeout: 5000 });
-          return { ok: true, output: 'GET /health and /api/todos OK (local smoke).' };
-        } catch (e) {
-          return {
-            ok: false,
-            output: `DAST smoke failed (start dev servers or disable dast): ${String((e as Error).message)}`,
-          };
-        }
-      }),
-    );
-
-    gateResults.push(
-      await gateOrch.runGate('dockerBuild', activeRepoRoot, async () => {
-        if (!cfg.qualityGates.dockerBuild.enabled) {
-          return { ok: false, output: 'docker build gate disabled (not executed).' };
-        }
-        const short = execGit(session.path, ['rev-parse', '--short', 'HEAD']).trim();
-        dockerTag = cfg.docker.imageTagTemplate.replace('{{shortSha}}', short);
-        return dockerMgr.build(activeRepoRoot, dockerTag);
-      }),
-    );
 
     const mandatoryGateFailed = gateResults.some(g => g.mandatory && g.status === 'failed');
     const gateDetail = gateResults.map(g => `${g.id}:${g.status}`).join(', ');
@@ -915,6 +987,7 @@ async function runFullPipeline(
           implementationSummary,
           gateSummary,
           fallbackBody: bodyParts,
+          maxCharsPerSkill: promptBudget.maxCharsPerSkill,
         })
       : {
           title: commitGen.generateTitle('sdlc', implementationSummary || instruction),
@@ -1035,7 +1108,7 @@ async function runFullPipeline(
 
     const runAiReview = Boolean(client && cfg.features.aiReview && cfg.aiHero.executionEnabled);
     if (runAiReview && client) {
-      const reviewer = new CodeReviewOrchestrator(client, model);
+      const reviewer = new CodeReviewOrchestrator(client, model, promptBudget);
       const fixer = new AutoFixEngine(reviewer);
       let iter = 0;
       lastReview = await reviewer.runIteration(instruction, skillsBlock, session, reviewPaths);

@@ -11,6 +11,15 @@ export type RetryPolicy = { maxAttempts: number; backoffMs: number };
 
 export type AiProviderName = 'openai';
 
+export type PromptBudgetConfig = {
+  maxCharsPerFile: number;
+  maxCharsPerSkill: number;
+  maxSkillsInPrompt: number;
+  /** Send `git diff` hunks in review instead of full files when possible (saves tokens). */
+  reviewPreferGitDiff: boolean;
+  maxBuildFeedbackChars: number;
+};
+
 export type AiConfig = {
   provider: AiProviderName;
   /** Default model when env OPENAI_MODEL is unset */
@@ -21,6 +30,8 @@ export type AiConfig = {
   implementationRetries: RetryPolicy;
   reviewRetries: RetryPolicy;
   requestTimeoutMs: number;
+  /** Input-size limits for OpenAI prompts (see `sdlc.features.json` `ai.compactPrompts`). */
+  promptBudget: PromptBudgetConfig;
 };
 
 export type AiHeroSkillSource = {
@@ -205,6 +216,13 @@ export const sdlcConfig: SdlcConfig = {
     implementationRetries: { maxAttempts: 2, backoffMs: 3000 },
     reviewRetries: defaultRetry,
     requestTimeoutMs: 120_000,
+    promptBudget: {
+      maxCharsPerFile: 24_000,
+      maxCharsPerSkill: 2_500,
+      maxSkillsInPrompt: 3,
+      reviewPreferGitDiff: true,
+      maxBuildFeedbackChars: 3_500,
+    },
   },
   aiHero: {
     documentationUrl: 'https://www.aihero.dev/',
@@ -290,7 +308,7 @@ export const sdlcConfig: SdlcConfig = {
     requireExplicitAuthForProduction: true,
   },
   workflow: {
-    maxAiReviewIterations: 3,
+    maxAiReviewIterations: 2,
     maxImplementationRetries: 2,
     maxTestRetries: 2,
     maxExecutionTimeMs: 45 * 60_000,
