@@ -1,10 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-/** Load repo-root `.env` into `process.env` (does not override existing env vars). */
-export function loadDotEnv(repoRoot: string): void {
-  const file = path.join(repoRoot, '.env');
-  if (!existsSync(file)) return;
+export function loadDotEnvFile(file: string): boolean {
+  if (!existsSync(file)) return false;
   const text = readFileSync(file, 'utf8');
   for (const line of text.split('\n')) {
     const t = line.trim();
@@ -19,6 +17,27 @@ export function loadDotEnv(repoRoot: string): void {
     ) {
       val = val.slice(1, -1);
     }
-    if (process.env[key] === undefined) process.env[key] = val;
+    const existing = process.env[key];
+    const refillOpenAi = key === 'OPENAI_API_KEY' && !existing?.trim();
+    if (existing === undefined || refillOpenAi) {
+      process.env[key] = val;
+    }
   }
+  return true;
+}
+
+export function loadDotEnv(repoRoot: string): void {
+  loadDotEnvFile(path.join(repoRoot, '.env'));
+}
+
+export function normalizeOpenAiKey(raw?: string): string | null {
+  let k = raw?.trim() ?? '';
+  if (!k) return null;
+  if (k.startsWith('Y=')) k = k.slice(2).trim();
+  return k || null;
+}
+
+export function hasOpenAiKey(): boolean {
+  const k = normalizeOpenAiKey(process.env.OPENAI_API_KEY);
+  return Boolean(k?.startsWith('sk-'));
 }

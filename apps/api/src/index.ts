@@ -47,6 +47,16 @@ app.delete('/api/todos/:id', (req, res) => {
   res.status(204).end();
 });
 
+// Respond with 405 Method Not Allowed for unsupported methods on /api/todos
+app.all('/api/todos', (req, res) => {
+  res.status(405).json({ error: 'Method Not Allowed' });
+});
+
+// Respond with 405 Method Not Allowed for unsupported methods on /api/todos/:id
+app.all('/api/todos/:id', (req, res) => {
+  res.status(405).json({ error: 'Method Not Allowed' });
+});
+
 const port = Number(process.env.PORT ?? 4000);
 app.listen(port, () => {
   console.log(`Todo API listening on :${port}`);

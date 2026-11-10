@@ -1,12 +1,14 @@
 import OpenAI from 'openai';
 import type { AiConfig } from '../../sdlc.config.js';
+import { normalizeOpenAiKey } from '../load-env.js';
 
 export class AIProviderManager {
   constructor(private readonly cfg: AiConfig) {}
 
   createClient(): OpenAI | null {
-    if (!process.env.OPENAI_API_KEY) return null;
-    return new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: this.cfg.requestTimeoutMs });
+    const apiKey = normalizeOpenAiKey(process.env.OPENAI_API_KEY);
+    if (!apiKey) return null;
+    return new OpenAI({ apiKey, timeout: this.cfg.requestTimeoutMs });
   }
 
   model(): string {
